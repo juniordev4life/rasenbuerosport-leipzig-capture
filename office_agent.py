@@ -14,28 +14,33 @@ Status zurück. Bewusst klein + austauschbar:
 Auf dem Mac testbar gegen eine lokale Kommando-Datei + Testbild (siehe unten).
 Umzug auf den i7 = nur die Capture-/Encoder-Zeilen.
 
-========================= API-CONTRACT (GEBAUT) ==============================
-Beide Endpoints existieren in der API (Branch feat/recording-agent-endpoints,
-Migration 023). Auth: Shared Secret im Header `X-Agent-Secret`, api-seitig
-env `AGENT_SECRET` (`requireAgentSecret`, analog Scheduler-Muster):
+============================= API-CONTRACT (GEBAUT) ==========================
+Alle Endpoints existieren in der API (Migration 023 + 024). Auth für die
+Agent-Endpoints: Shared Secret im Header `X-Agent-Secret`, api-seitig env
+`AGENT_SECRET` (`requireAgentSecret`, analog Scheduler-Muster):
 
   GET  /api/v1/recording/next
-       -> data: { "action": "start"|"stop"|"idle", "game_id": "<id>" }
+       -> data: { "action": "start"|"stop"|"abort"|"idle", "game_id": "<id>" }
        Die App setzt das Kommando via POST /api/v1/recording/command
        (Firebase-Auth): "start" beim Anpfiff mit PROVISORISCHER recording_id
        (Client-UUID — das Spiel existiert erst nach Abpfiff), "stop" nach dem
-       Speichern mit der ECHTEN game_id. Einzeiler-Slot, wird überschrieben,
-       nie konsumiert. Ein "start" älter als 3 h kommt als "idle" zurück
-       (Stale-Guard gegen verspätete Agent-Starts).
+       Speichern mit der ECHTEN game_id, "abort" beim Abbrechen (Zurück /
+       Fehler-Dialog) — Agent stoppt UND löscht die Datei. Einzeiler-Slot,
+       wird überschrieben, nie konsumiert. Ein "start" älter als 3 h kommt
+       als "idle" zurück (Stale-Guard).
+
+  POST /api/v1/recording/report
+       body: { "recording_id": "<provisorisch>",
+               "status": "recording"|"failed"|"stopped"|"aborted" }
+       Rückkanal: sagt der App (die ihn via GET /recording/status pollt), ob
+       die Aufnahme wirklich läuft. LÄUFT ÜBER DIE PROVISORISCHE recording_id,
+       nicht über die echte game_id.
 
   PATCH /api/v1/games/:gameId
-       body: { "video_status": "recording"|"uploaded"|"ready",
-               "highlight_url"?: "..." }
-       (Antwortformat wie üblich: { code, title, message, data, error })
-       :gameId muss eine echte Spiel-UUID sein. Der "recording"-Report nach
-       dem Start läuft mit der provisorischen ID auf 404 — bewusst, nicht
-       fatal (das Spiel existiert da noch nicht). Der "uploaded"-Report nach
-       dem Stop trägt die echte ID aus dem Stop-Kommando und sitzt.
+       body: { "video_status": "uploaded"|"ready", "highlight_url"?: "..." }
+       :gameId ist die ECHTE Spiel-UUID. Erst ab Upload genutzt (nach dem
+       Stop), vorher existiert das Spiel nicht. Der laufende Aufnahme-Status
+       geht NICHT hierüber, sondern über /recording/report.
 =============================================================================
 """
 import json
@@ -61,6 +66,8 @@ _proc = None
 _rec_path = None
 _rec_started = 0.0
 _failed_start_gid = None   # gegen Retry-Spam: gid, deren Start schon scheiterte
+_rec_id = None             # provisorische recording_id der laufenden Aufnahme (Rückkanal)
+_handled_abort_gid = None  # gegen Abbruch-Spam: zuletzt bearbeitete abort-gid
 
 
 def capture_input_args():
@@ -114,7 +121,7 @@ def get_next_command():
 
 
 def start_recording(game_id):
-    global _proc, _rec_path, _rec_started, _failed_start_gid
+    global _proc, _rec_path, _rec_started, _failed_start_gid, _rec_id
     if _proc or game_id == _failed_start_gid:
         return
     os.makedirs(REC_DIR, exist_ok=True)
@@ -133,18 +140,20 @@ def start_recording(game_id):
         _failed_start_gid = game_id   # diese gid nicht im Sekundentakt neu versuchen
         print(f"  FEHLER: ffmpeg sofort beendet (Code {proc.returncode}). Aufnahme "
               f"NICHT aktiv — ffmpeg-Fehler oben prüfen (Pixelformat? Gerät belegt?).")
+        report_recording_status(game_id, "failed")   # App zeigt daraufhin den Fehler-Dialog
         return
 
     _failed_start_gid = None
     _proc = proc
     _rec_path = rec_path
+    _rec_id = game_id   # provisorische ID merken: der Status-Rückkanal läuft darüber
     _rec_started = time.monotonic()
     print(f"  Aufnahme gestartet: {_rec_path}")
-    report_status(game_id, "recording")
+    report_recording_status(game_id, "recording")
 
 
 def stop_recording(game_id):
-    global _proc, _rec_path
+    global _proc, _rec_path, _rec_id
     if not _proc:
         return
     _proc.send_signal(signal.SIGINT)   # ffmpeg sauber beenden -> Datei finalisieren
@@ -153,10 +162,13 @@ def stop_recording(game_id):
     except subprocess.TimeoutExpired:
         _proc.kill()
     path = _rec_path
-    _proc, _rec_path = None, None
+    rec_id = _rec_id
+    _proc, _rec_path, _rec_id = None, None, None
     print(f"  Aufnahme gestoppt: {path}")
+    if rec_id:
+        report_recording_status(rec_id, "stopped")   # Rückkanal über die provisorische ID
     upload(game_id, path)
-    report_status(game_id, "uploaded")
+    report_status(game_id, "uploaded")                # video_status an der echten game_id
 
 
 def upload(game_id, path):
@@ -168,15 +180,57 @@ def upload(game_id, path):
 
 
 def report_status(game_id, status, **extra):
-    """Status an die API melden (Endpoint laut Contract). Fehler nicht fatal."""
+    """video_status an die echte Spiel-Zeile melden (PATCH /games/:id). Erst ab
+    Upload genutzt. Fehler nicht fatal."""
     try:
         _api("PATCH", f"/games/{game_id}", {"video_status": status, **extra})
     except Exception as e:
         print(f"  Status-Meldung ({status}) fehlgeschlagen:", e)
 
 
+def report_recording_status(recording_id, status):
+    """Capture-Status in den recording_status-Rückkanal melden, damit die App
+    weiß, ob die Aufnahme wirklich läuft (recording/failed) bzw. wie sie endete
+    (stopped/aborted). Läuft über die PROVISORISCHE recording_id (die die App
+    pollt), nicht über die echte game_id. Fehler nicht fatal."""
+    try:
+        _api("POST", "/recording/report",
+             {"recording_id": recording_id, "status": status})
+    except Exception as e:
+        print(f"  Status-Report ({status}) fehlgeschlagen:", e)
+
+
+def abort_recording(game_id):
+    """Abbruch: laufende Aufnahme stoppen UND die Datei verwerfen (im Gegensatz
+    zu stop, das sie für den Highlight-Schnitt behält). Auch dann sinnvoll, wenn
+    gerade nicht aufgenommen wird (z.B. nach fehlgeschlagenem Start) — räumt dann
+    eine evtl. angefangene Datei weg. Wird gesetzt, wenn der User im Live-Step
+    zurückgeht oder den Fehler-Dialog schließt."""
+    global _proc, _rec_path, _rec_id, _failed_start_gid
+    if _proc:
+        _proc.send_signal(signal.SIGINT)
+        try:
+            _proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            _proc.kill()
+    # Pfad rekonstruieren — gilt auch, wenn _rec_path nie gesetzt wurde (failed).
+    path = _rec_path or os.path.join(REC_DIR, f"game_{game_id}.mov")
+    _proc, _rec_path, _rec_id = None, None, None
+    if game_id == _failed_start_gid:
+        _failed_start_gid = None
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+            print(f"  Aufnahme abgebrochen + Datei gelöscht: {path}")
+        except OSError as e:
+            print(f"  Abbruch: Datei konnte nicht gelöscht werden ({e}).")
+    else:
+        print("  Aufnahme abgebrochen (keine Datei zu löschen).")
+    report_recording_status(game_id, "aborted")
+
+
 def main():
-    global _proc, _rec_path
+    global _proc, _rec_path, _handled_abort_gid
     print(f"Office-Agent läuft. API={API_BASE}  Capture-Plattform={platform.system()}"
           f"{'  [Dev: lokale Kommando-Datei]' if LOCAL_COMMAND_FILE else ''}")
     while True:
@@ -186,6 +240,9 @@ def main():
             start_recording(gid)
         elif action == "stop" and _proc:
             stop_recording(gid)
+        elif action == "abort" and gid != _handled_abort_gid:
+            abort_recording(gid)         # stoppt + löscht; greift auch ohne laufende Aufnahme
+            _handled_abort_gid = gid     # Slot wird nie konsumiert -> nur einmal je gid abbrechen
         # ffmpeg unerwartet gestorben (Kabel raus, Encoder-Fehler)? Nicht
         # weiter „recording" vorgaukeln — melden und zurücksetzen, damit der
         # nächste Start wieder greift.

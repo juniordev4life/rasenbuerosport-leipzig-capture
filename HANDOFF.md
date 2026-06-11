@@ -36,11 +36,12 @@ Schützenerkennung.
   `game_<id>.mov`, Upload-Stub, Status-Rückmeldung. END-TO-END LOKAL VERIFIZIERT
   (2026-06-11): echte Capture-Card am Mac, App-Anpfiff → Aufnahme → Speichern →
   Stop; die games-Zeile trägt danach `recording_id` (= Dateiname) + `video_status`.
-  API-Endpoints GEBAUT (api: `feat/recording-agent-endpoints` + Migration 023,
-  app: `feat/recording-trigger`) — Contract im Docstring. Health-Check drin:
-  stirbt ffmpeg sofort (falsche Config / gesperrtes Gerät), wird das erkannt und
-  zurückgesetzt, statt fälschlich „recording" zu melden. OFFEN: Highlights +
-  echter Upload (siehe Nächste Schritte 5).
+  API-Endpoints GEBAUT (Contract im Docstring). Health-Check drin: stirbt ffmpeg
+  sofort (falsche Config / gesperrtes Gerät), wird das erkannt und zurückgesetzt,
+  statt fälschlich „recording" zu melden. Abbruch + Fehler-Rückkanal gebaut:
+  `abort` stoppt UND löscht die Datei; der Agent meldet recording/failed/stopped/
+  aborted über `POST /recording/report`, damit die App einen Fehlstart erkennt
+  (Migration 024). OFFEN: Highlights + echter Upload (siehe Nächste Schritte 5).
 - `detect_scorer.py` — KI-Schützenerkennung (Claude Sonnet), eval-Modus misst
   die Trefferquote gegen Wahrheits-Labels. Läuft erst mit Material + API-Key.
 
