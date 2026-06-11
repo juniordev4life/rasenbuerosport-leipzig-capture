@@ -33,11 +33,14 @@ Schützenerkennung.
 
 ## Stand: Gerüst (noch nicht scharf)
 - `office_agent.py` — Aufnahme-Agent. Poll-Loop, ffmpeg-Aufnahme
-  `game_<id>.mov`, Upload-Stub, Status-Rückmeldung. Auf dem Mac getestet:
-  Kommando-Datei UND voller Poll-Loop gegen Mock-API (Secret-Header,
-  recording/uploaded-PATCHes, saubere 1080p-Datei). Die API-Endpoints sind
-  GEBAUT (api: Branch `feat/recording-agent-endpoints` + Migration 023,
-  app: Branch `feat/recording-trigger`) — Contract-Stand im Docstring.
+  `game_<id>.mov`, Upload-Stub, Status-Rückmeldung. END-TO-END LOKAL VERIFIZIERT
+  (2026-06-11): echte Capture-Card am Mac, App-Anpfiff → Aufnahme → Speichern →
+  Stop; die games-Zeile trägt danach `recording_id` (= Dateiname) + `video_status`.
+  API-Endpoints GEBAUT (api: `feat/recording-agent-endpoints` + Migration 023,
+  app: `feat/recording-trigger`) — Contract im Docstring. Health-Check drin:
+  stirbt ffmpeg sofort (falsche Config / gesperrtes Gerät), wird das erkannt und
+  zurückgesetzt, statt fälschlich „recording" zu melden. OFFEN: Highlights +
+  echter Upload (siehe Nächste Schritte 5).
 - `detect_scorer.py` — KI-Schützenerkennung (Claude Sonnet), eval-Modus misst
   die Trefferquote gegen Wahrheits-Labels. Läuft erst mit Material + API-Key.
 
@@ -63,19 +66,28 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
    Idee: Parallelbetrieb — die manuellen App-Taps SIND die Wahrheit, der
    Eval-Satz fällt im Normalbetrieb gratis ab; danach Hi-Konfidenz automatisieren.
-4. Browser-Flow lokal testen (Endpoints sind gebaut, PRs mergen + Migration
-   023 einspielen). Drei Terminals + Capture-Card am Mac:
-   - API: `npm run db:local`, Migration anwenden, `AGENT_SECRET=<secret>` in
-     .env, `npm run dev` (Port 3001)
+4. ERLEDIGT (2026-06-11): Browser-Flow lokal verifiziert. Aufbau, drei Terminals
+   + Capture-Card am Mac:
+   - API: `npm run db:local`, Migration 023 anwenden, `AGENT_SECRET=<secret>` in
+     .env, `npm run dev` (Port 3001). Achtung: `node --watch` lädt `.env`-
+     Änderungen NICHT neu — nach einem Edit den API-Prozess neu starten.
    - App: `npm run dev`, Browser `localhost:5173`
    - Agent: `AGENT_SECRET=<secret> CAPTURE_INPUT='-f avfoundation -framerate 30
-     -video_size 1920x1080 -i "USB3.0 Video:USB3.0 Audio"' python3 office_agent.py`
+     -video_size 1920x1080 -pixel_format uyvy422 -i "USB3.0 Video:USB3.0 Audio"'
+     python3 office_agent.py`
      (Gerätenamen via `ffmpeg -f avfoundation -list_devices true -i ""` —
-     NAMEN nutzen, nicht Indizes: die sind zwischen Aufrufen nicht stabil.
-     API_BASE-Default zeigt jetzt auf 3001)
+     NAMEN nutzen, nicht Indizes: nicht stabil. `-pixel_format uyvy422` nötig,
+     die Karte kann kein yuv420p; sonst `nv12`. OBS/QuickTime/Teams VORHER
+     schließen — sie sperren die Karte. API_BASE-Default zeigt auf 3001.)
    - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
-     Danach hat die games-Zeile `video_status='uploaded'`.
-5. Auf dem geliehenen i7 deployen (Ubuntu Server, headless) — nur die
+5. Highlights + echten Upload verdrahten (das eigentliche offene Stück): nach
+   dem Stop `make_highlights.py` auf die `.mov` laufen lassen, das Reel real in
+   den Bucket laden (`GCS_BUCKET` setzen statt Stub), dann `highlight_url` +
+   `video_status='ready'` per PATCH ans Spiel. Statusfluss sauber führen:
+   `recording → uploaded → ready`. Aktuell meldet der Agent `uploaded` schon
+   ohne echten Upload, und `recording` wird nie persistiert (Start läuft auf
+   404, weil das Spiel da noch nicht existiert).
+6. Auf dem geliehenen i7 deployen (Ubuntu Server, headless) — nur die
    Capture-Zeile (v4l2/`/dev/video0`) + Encoder (`ENCODE_ARGS=-c:v h264_qsv …`).
    Unter systemd `PYTHONUNBUFFERED=1` setzen, sonst verschluckt der
    stdout-Buffer die Agent-Logs (auf dem Mac schon beobachtet).
@@ -84,8 +96,18 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
 - pytesseract läuft NICHT in Claudes Sandbox (kann TMPDIR nicht lesen) — OCR-
   Skripte führt Marco selbst aus. cv2/Template-Matching geht in der Sandbox.
 - Aufnahme per ffmpeg DIREKT, nicht OBS (leichter, headless-tauglich).
+- macOS-Capture (Dev): Geräte per NAME ansprechen (`CAPTURE_INPUT` mit shlex-
+  Quoting), avfoundation-Indizes sind zwischen Aufrufen instabil. Die USB3.0-
+  Karte braucht `-pixel_format uyvy422` (sonst `nv12`), kann kein yuv420p.
+  ffmpeg `Could not lock device for configuration` = Karte von OBS/QuickTime/
+  Teams belegt → App schließen.
+- Status-Semantik (noch unfertig): `uploaded` ist aktuell optimistisch (Upload
+  ist Stub, Datei bleibt lokal); `recording` wird beim Start nie persistiert
+  (Spiel existiert noch nicht → 404). Erst mit echtem Upload + `ready` wird die
+  Statusspalte aussagekräftig (Nächste Schritte 5).
 - Maschinen-Auth = Shared Secret im Header (`X-Agent-Secret`), wie das
-  Scheduler-Muster der API — KEIN Firebase-User-Token für den Agent.
+  Scheduler-Muster der API — KEIN Firebase-User-Token für den Agent. Wert in
+  der API-`.env` (`AGENT_SECRET`) und im Agent-Env muss identisch sein, sonst 401.
 - In dieser Umgebung nur `python3` (nicht `python`); cv2 über `venv/bin/python`.
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
