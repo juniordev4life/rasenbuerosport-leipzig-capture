@@ -41,7 +41,10 @@ Schützenerkennung.
   statt fälschlich „recording" zu melden. Abbruch + Fehler-Rückkanal gebaut:
   `abort` stoppt UND löscht die Datei; der Agent meldet recording/failed/stopped/
   aborted über `POST /recording/report`, damit die App einen Fehlstart erkennt
-  (Migration 024). OFFEN: Highlights + echter Upload (siehe Nächste Schritte 5).
+  (Migration 024). Nach dem Stop startet der Agent die Highlight-Pipeline
+  (`process_highlights.py`, eigener Prozess): make_highlights → Reel → gsutil-
+  Upload (public) → PATCH `video_status` (processing → ready + `highlight_url`,
+  sonst failed). Vision-only MVP — Schütze-Banner ist Stufe 2 (Nächste Schritte 5).
 - `detect_scorer.py` — KI-Schützenerkennung (Claude Sonnet), eval-Modus misst
   die Trefferquote gegen Wahrheits-Labels. Läuft erst mit Material + API-Key.
 
@@ -81,13 +84,18 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
      die Karte kann kein yuv420p; sonst `nv12`. OBS/QuickTime/Teams VORHER
      schließen — sie sperren die Karte. API_BASE-Default zeigt auf 3001.)
    - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
-5. Highlights + echten Upload verdrahten (das eigentliche offene Stück): nach
-   dem Stop `make_highlights.py` auf die `.mov` laufen lassen, das Reel real in
-   den Bucket laden (`GCS_BUCKET` setzen statt Stub), dann `highlight_url` +
-   `video_status='ready'` per PATCH ans Spiel. Statusfluss sauber führen:
-   `recording → uploaded → ready`. Aktuell meldet der Agent `uploaded` schon
-   ohne echten Upload, und `recording` wird nie persistiert (Start läuft auf
-   404, weil das Spiel da noch nicht existiert).
+5. ERLEDIGT (MVP, Vision-only): Highlights verdrahtet. Nach dem Stop startet der
+   Agent `process_highlights.py` (eigener Prozess): `make_highlights` → Reel →
+   `gsutil cp -a public-read` nach `gs://$GCS_BUCKET/$HIGHLIGHTS_PREFIX/<gameId>.mp4`
+   → PATCH (processing → ready + `highlight_url`, sonst failed). Voraussetzungen:
+   venv mit cv2 (Agent daher mit `venv/bin/python office_agent.py` starten, weil
+   die Pipeline cv2 braucht), `gcloud`-Login für gsutil, und die env-Variablen
+   `GCS_BUCKET=<FIREBASE_STORAGE_BUCKET>` + `HIGHLIGHTS_PREFIX` (Prod: `highlights`,
+   lokal: `highlights-dev`). Test am Mac braucht ein echtes Spielvideo (Testbild
+   hat kein HUD → keine Tore → `failed`).
+   OFFEN (Stufe 2): Schütze/Vorlage-Banner aus den App-Toren (`merge_scorers`) —
+   dafür müsste der Agent die Timeline + Usernames von der API holen und ein
+   `app_<base>.json` bauen; aktuell läuft die Pipeline rein über die Vision-Tore.
 6. Auf dem geliehenen i7 deployen (Ubuntu Server, headless) — nur die
    Capture-Zeile (v4l2/`/dev/video0`) + Encoder (`ENCODE_ARGS=-c:v h264_qsv …`).
    Unter systemd `PYTHONUNBUFFERED=1` setzen, sonst verschluckt der

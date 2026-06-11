@@ -37,10 +37,17 @@ Agent-Endpoints: Shared Secret im Header `X-Agent-Secret`, api-seitig env
        nicht über die echte game_id.
 
   PATCH /api/v1/games/:gameId
-       body: { "video_status": "uploaded"|"ready", "highlight_url"?: "..." }
-       :gameId ist die ECHTE Spiel-UUID. Erst ab Upload genutzt (nach dem
-       Stop), vorher existiert das Spiel nicht. Der laufende Aufnahme-Status
-       geht NICHT hierüber, sondern über /recording/report.
+       body: { "video_status": "processing"|"ready"|"failed",
+               "highlight_url"?: "..." }
+       :gameId ist die ECHTE Spiel-UUID. Nach dem Stop: "processing" (Reel
+       wird erzeugt), dann "ready" + highlight_url (Reel im Bucket) oder
+       "failed". Der laufende Aufnahme-Status geht NICHT hierüber, sondern
+       über /recording/report.
+
+Nach dem Stop startet der Agent die Highlight-Pipeline als eigenen Prozess
+(process_highlights.py): make_highlights -> Reel -> gsutil-Upload (public) ->
+PATCH ready/failed. Sie läuft mit dem venv-Python (cv2) — den Agent daher mit
+`venv/bin/python office_agent.py` starten, sobald Highlights aktiv sind.
 =============================================================================
 """
 import json
@@ -49,6 +56,7 @@ import platform
 import shlex
 import signal
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -57,7 +65,7 @@ API_BASE = os.environ.get("API_BASE", "http://localhost:3001/api/v1")
 AGENT_SECRET = os.environ.get("AGENT_SECRET", "")          # X-Agent-Secret
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "3"))
 REC_DIR = os.environ.get("REC_DIR", "recordings")
-GCS_BUCKET = os.environ.get("GCS_BUCKET", "")               # für den Upload-Stub
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "")               # Reel-Bucket (von process_highlights genutzt)
 MAX_REC_SECONDS = int(os.environ.get("MAX_REC_SECONDS", str(3 * 3600)))  # Auto-Stop-Schutz
 LOCAL_COMMAND_FILE = os.environ.get("LOCAL_COMMAND_FILE")   # Dev: ohne API testen
 START_GRACE_SECONDS = float(os.environ.get("START_GRACE_SECONDS", "1.5"))  # Health-Check-Fenster
@@ -167,16 +175,29 @@ def stop_recording(game_id):
     print(f"  Aufnahme gestoppt: {path}")
     if rec_id:
         report_recording_status(rec_id, "stopped")   # Rückkanal über die provisorische ID
-    upload(game_id, path)
-    report_status(game_id, "uploaded")                # video_status an der echten game_id
+    # Highlight-Pipeline als eigener Prozess: erzeugt das Reel, lädt es hoch und
+    # PATCHt am Ende ready/failed. Status zunächst "processing" (App: „wird erstellt").
+    report_status(game_id, "processing")              # video_status an der echten game_id
+    start_highlight_pipeline(game_id, path)
 
 
-def upload(game_id, path):
-    """STUB: Video (bzw. später die fertigen Highlights) in den Bucket laden."""
-    if not GCS_BUCKET:
-        print(f"  [Upload-Stub] würde {path} nach gs://<bucket>/game_{game_id}/ laden")
+def start_highlight_pipeline(game_id, video_path):
+    """Startet die Highlight-Pipeline als losgelösten Prozess (process_highlights.py):
+    make_highlights -> Reel -> Upload -> PATCH ready/failed. Fire-and-forget, damit
+    der Poll-Loop frei bleibt (die Verarbeitung dauert Minuten). Läuft mit demselben
+    Interpreter wie der Agent (venv-Python für cv2)."""
+    if not video_path or not os.path.exists(video_path):
+        print("  Kein Aufnahme-Video — Highlight-Pipeline übersprungen.")
+        report_status(game_id, "failed")
         return
-    subprocess.run(["gsutil", "cp", path, f"gs://{GCS_BUCKET}/game_{game_id}/"], check=False)
+    env = {**os.environ, "PIPE_GAME_ID": game_id, "PIPE_VIDEO": video_path}
+    try:
+        subprocess.Popen([sys.executable, "process_highlights.py"],
+                         env=env, start_new_session=True)
+        print(f"  Highlight-Pipeline gestartet (Spiel {game_id}).")
+    except Exception as e:
+        print(f"  Highlight-Pipeline-Start fehlgeschlagen: {e}")
+        report_status(game_id, "failed")
 
 
 def report_status(game_id, status, **extra):
