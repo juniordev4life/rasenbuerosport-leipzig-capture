@@ -7,8 +7,10 @@ venv/
 .DS_Store
 
 # Quell-Videos (GB-groß) + generierte Artefakte
+# *.mov pauschal: deckt auch Karten-Testaufnahmen im Repo-Root ab
 videos/
 recordings/
+*.mov
 frames_*/
 goals.json
 goals_*.json

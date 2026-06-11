@@ -68,9 +68,10 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    - API: `npm run db:local`, Migration anwenden, `AGENT_SECRET=<secret>` in
      .env, `npm run dev` (Port 3001)
    - App: `npm run dev`, Browser `localhost:5173`
-   - Agent: `AGENT_SECRET=<secret> CAPTURE_INPUT="-f avfoundation -framerate 30
-     -video_size 1920x1080 -i 1:0" python3 office_agent.py`
-     (Geräte-Index via `ffmpeg -f avfoundation -list_devices true -i ""`;
+   - Agent: `AGENT_SECRET=<secret> CAPTURE_INPUT='-f avfoundation -framerate 30
+     -video_size 1920x1080 -i "USB3.0 Video:USB3.0 Audio"' python3 office_agent.py`
+     (Gerätenamen via `ffmpeg -f avfoundation -list_devices true -i ""` —
+     NAMEN nutzen, nicht Indizes: die sind zwischen Aufrufen nicht stabil.
      API_BASE-Default zeigt jetzt auf 3001)
    - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
      Danach hat die games-Zeile `video_status='uploaded'`.

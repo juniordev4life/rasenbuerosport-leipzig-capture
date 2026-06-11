@@ -41,6 +41,7 @@ env `AGENT_SECRET` (`requireAgentSecret`, analog Scheduler-Muster):
 import json
 import os
 import platform
+import shlex
 import signal
 import subprocess
 import time
@@ -61,10 +62,16 @@ _rec_started = 0.0
 
 
 def capture_input_args():
-    """ffmpeg-Eingang je nach Plattform. CAPTURE_INPUT übersteuert komplett."""
+    """ffmpeg-Eingang je nach Plattform. CAPTURE_INPUT übersteuert komplett.
+
+    shlex-Quoting: avfoundation-GERÄTENAMEN statt Indizes verwenden — die
+    Indizes sind zwischen Enumerationen nicht stabil (Continuity-Kameras!).
+    Namen mit Leerzeichen in Anführungszeichen:
+      CAPTURE_INPUT='-f avfoundation ... -i "USB3.0 Video:USB3.0 Audio"'
+    """
     override = os.environ.get("CAPTURE_INPUT")
     if override:
-        return override.split()
+        return shlex.split(override)
     if platform.system() == "Linux":   # Office-i7: echte Capture-Box
         dev = os.environ.get("CAPTURE_DEV", "/dev/video0")
         return ["-f", "v4l2", "-framerate", "30", "-video_size", "1920x1080", "-i", dev]
@@ -75,7 +82,7 @@ def capture_input_args():
 
 def encode_args():
     """Encoder. Portabel: libx264. Auf dem i7 später ENCODE_ARGS='-c:v h264_qsv ...'."""
-    return os.environ.get("ENCODE_ARGS", "-c:v libx264 -preset veryfast -crf 23").split()
+    return shlex.split(os.environ.get("ENCODE_ARGS", "-c:v libx264 -preset veryfast -crf 23"))
 
 
 def _api(method, path, body=None):
