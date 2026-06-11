@@ -33,8 +33,11 @@ Schützenerkennung.
 
 ## Stand: Gerüst (noch nicht scharf)
 - `office_agent.py` — Aufnahme-Agent. Poll-Loop, ffmpeg-Aufnahme
-  `game_<id>.mov`, Upload-Stub, Status-Rückmeldung. Auf dem Mac gegen Testbild
-  getestet. Zwei API-Endpoints noch zu bauen (Contract im Docstring).
+  `game_<id>.mov`, Upload-Stub, Status-Rückmeldung. Auf dem Mac getestet:
+  Kommando-Datei UND voller Poll-Loop gegen Mock-API (Secret-Header,
+  recording/uploaded-PATCHes, saubere 1080p-Datei). Die API-Endpoints sind
+  GEBAUT (api: Branch `feat/recording-agent-endpoints` + Migration 023,
+  app: Branch `feat/recording-trigger`) — Contract-Stand im Docstring.
 - `detect_scorer.py` — KI-Schützenerkennung (Claude Sonnet), eval-Modus misst
   die Trefferquote gegen Wahrheits-Labels. Läuft erst mit Material + API-Key.
 
@@ -60,10 +63,21 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
    Idee: Parallelbetrieb — die manuellen App-Taps SIND die Wahrheit, der
    Eval-Satz fällt im Normalbetrieb gratis ab; danach Hi-Konfidenz automatisieren.
-4. Die 2 API-Endpoints bauen (Contract in `office_agent.py`), Agent gegen die
-   echte API testen.
+4. Browser-Flow lokal testen (Endpoints sind gebaut, PRs mergen + Migration
+   023 einspielen). Drei Terminals + Capture-Card am Mac:
+   - API: `npm run db:local`, Migration anwenden, `AGENT_SECRET=<secret>` in
+     .env, `npm run dev` (Port 3001)
+   - App: `npm run dev`, Browser `localhost:5173`
+   - Agent: `AGENT_SECRET=<secret> CAPTURE_INPUT="-f avfoundation -framerate 30
+     -video_size 1920x1080 -i 1:0" python3 office_agent.py`
+     (Geräte-Index via `ffmpeg -f avfoundation -list_devices true -i ""`;
+     API_BASE-Default zeigt jetzt auf 3001)
+   - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
+     Danach hat die games-Zeile `video_status='uploaded'`.
 5. Auf dem geliehenen i7 deployen (Ubuntu Server, headless) — nur die
    Capture-Zeile (v4l2/`/dev/video0`) + Encoder (`ENCODE_ARGS=-c:v h264_qsv …`).
+   Unter systemd `PYTHONUNBUFFERED=1` setzen, sonst verschluckt der
+   stdout-Buffer die Agent-Logs (auf dem Mac schon beobachtet).
 
 ## Gotchas
 - pytesseract läuft NICHT in Claudes Sandbox (kann TMPDIR nicht lesen) — OCR-
