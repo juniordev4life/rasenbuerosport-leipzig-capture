@@ -1,0 +1,8 @@
+# Python-Abhängigkeiten der Capture-/Highlight-Pipeline.
+# Zusätzlich als System-Tools nötig (NICHT pip): ffmpeg, tesseract-ocr (+ tesseract-ocr-deu).
+opencv-python>=4.9
+numpy>=1.26
+pytesseract>=0.3.10
+Pillow>=10.2
+# optional — nur für detect_scorer.py (Vision-gestützte Schützenerkennung):
+anthropic>=0.40

@@ -1,0 +1,6 @@
+[
+  { "score": "1:0", "scorer_color": "red",     "assist_color": "blue" },
+  { "score": "2:0", "scorer_color": "blue",    "assist_color": "red" },
+  { "score": "2:1", "scorer_color": "unknown", "assist_color": "none" },
+  { "score": "2:2", "scorer_color": "unknown", "assist_color": "none" }
+]

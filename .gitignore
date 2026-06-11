@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# macOS
+.DS_Store
+
+# Quell-Videos (GB-groß) + generierte Artefakte
+videos/
+recordings/
+frames_*/
+goals.json
+goals_*.json
+score_timeline*.json
+timeline*.json
+highlights_*/
+*_highlights.mp4
+*_demo.json
+command.json

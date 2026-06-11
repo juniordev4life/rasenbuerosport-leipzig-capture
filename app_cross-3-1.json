@@ -1,0 +1,6 @@
+[
+  { "away": 0, "home": 1, "team": "home", "minute": 5,  "period": "regular", "stoppage": 0, "assist_by": "Tobi",  "goal_type": "play", "scored_by": "Marco",  "event_type": "goal", "is_own_goal": false },
+  { "away": 0, "home": 2, "team": "home", "minute": 49, "period": "regular", "stoppage": 0, "assist_by": "Marco", "goal_type": "play", "scored_by": "Tobi",   "event_type": "goal", "is_own_goal": false },
+  { "away": 0, "home": 3, "team": "home", "minute": 67, "period": "regular", "stoppage": 0, "assist_by": "Tobi",  "goal_type": "play", "scored_by": "Marco",  "event_type": "goal", "is_own_goal": false },
+  { "away": 1, "home": 3, "team": "away", "minute": 80, "period": "regular", "stoppage": 0, "goal_type": "play", "scored_by": "Gegner", "event_type": "goal", "is_own_goal": false }
+]
