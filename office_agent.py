@@ -14,18 +14,28 @@ Status zurück. Bewusst klein + austauschbar:
 Auf dem Mac testbar gegen eine lokale Kommando-Datei + Testbild (siehe unten).
 Umzug auf den i7 = nur die Capture-/Encoder-Zeilen.
 
-================================ API-CONTRACT ================================
-Zwei Endpoints müssen api-seitig noch gebaut werden (Auth: Shared Secret im
-Header `X-Agent-Secret`, analog zu eurem `requireSchedulerSecret`/X-Trigger-Secret):
+========================= API-CONTRACT (GEBAUT) ==============================
+Beide Endpoints existieren in der API (Branch feat/recording-agent-endpoints,
+Migration 023). Auth: Shared Secret im Header `X-Agent-Secret`, api-seitig
+env `AGENT_SECRET` (`requireAgentSecret`, analog Scheduler-Muster):
 
   GET  /api/v1/recording/next
        -> data: { "action": "start"|"stop"|"idle", "game_id": "<id>" }
-       (Was die App bei „Spiel starten/beenden" als nächstes Kommando setzt.)
+       Die App setzt das Kommando via POST /api/v1/recording/command
+       (Firebase-Auth): "start" beim Anpfiff mit PROVISORISCHER recording_id
+       (Client-UUID — das Spiel existiert erst nach Abpfiff), "stop" nach dem
+       Speichern mit der ECHTEN game_id. Einzeiler-Slot, wird überschrieben,
+       nie konsumiert. Ein "start" älter als 3 h kommt als "idle" zurück
+       (Stale-Guard gegen verspätete Agent-Starts).
 
-  PATCH /api/v1/games/:gameId        (oder POST /games/:gameId/recording)
+  PATCH /api/v1/games/:gameId
        body: { "video_status": "recording"|"uploaded"|"ready",
-               "highlight_url"?: "...", ... }
+               "highlight_url"?: "..." }
        (Antwortformat wie üblich: { code, title, message, data, error })
+       :gameId muss eine echte Spiel-UUID sein. Der "recording"-Report nach
+       dem Start läuft mit der provisorischen ID auf 404 — bewusst, nicht
+       fatal (das Spiel existiert da noch nicht). Der "uploaded"-Report nach
+       dem Stop trägt die echte ID aus dem Stop-Kommando und sitzt.
 =============================================================================
 """
 import json
@@ -37,7 +47,7 @@ import time
 import urllib.request
 
 # --- Konfiguration (env) ----------------------------------------------------
-API_BASE = os.environ.get("API_BASE", "http://localhost:3000/api/v1")
+API_BASE = os.environ.get("API_BASE", "http://localhost:3001/api/v1")
 AGENT_SECRET = os.environ.get("AGENT_SECRET", "")          # X-Agent-Secret
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "3"))
 REC_DIR = os.environ.get("REC_DIR", "recordings")
