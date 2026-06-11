@@ -60,9 +60,17 @@ USB-Capture-Box anstecken, dann:
 ```bash
 lsusb
 v4l2-ctl --list-devices
+v4l2-ctl --list-formats-ext -d /dev/video0   # unterstützte Formate/Auflösungen/FPS
 ```
 → Die Box sollte als Gerät auftauchen (z.B. `/dev/video0`). Wenn die Box noch nicht
 da ist: einfach überspringen, machen wir später.
+
+Die `--list-formats-ext`-Ausgabe ist das Linux-Pendant zur macOS-Pixelformat-Eigenheit
+(siehe HANDOFF, Gotchas): Der Agent fordert per `CAPTURE_INPUT` (Linux-Default `v4l2`,
+1920x1080@30) ein Format an, das die Box wirklich kann. Liefert die Box z.B. nur
+`YUYV`/`MJPG`, das via `-input_format` in `CAPTURE_INPUT` setzen — sonst bricht ffmpeg
+mit „format not supported" ab. Und: nur ein Prozess darf `/dev/video0` öffnen
+(kein paralleler Stream), sonst „device busy".
 
 ## 6. Dauerbetrieb (optional, empfohlen)
 - Im BIOS „**Auto Power On after power loss / Restore on AC**" aktivieren → der
