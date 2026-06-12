@@ -102,25 +102,48 @@ def run_postmatch(base, skip_events):
 
 def build_app_timeline(goals, players):
     """Vision-Tore + Aufstellung -> App-Timeline (laufender Stand). 1v1: die
-    Seite hat genau einen Spieler -> dessen Username als Schuetze; sonst
-    bleibt der In-Game-Name aus dem Events-Screen im Banner stehen."""
-    side_names = {"home": [], "away": []}
+    Seite hat genau einen Spieler -> dessen player_id als scored_by (die App
+    loest Schuetzen ueber die SPIELER-ID auf, nicht ueber den Namen!) plus
+    scored_by_name als Anzeigename fuers Highlight-Banner. Bei mehreren
+    Spielern je Seite (2v2) bleibt nur der In-Game-Name als scored_by_name —
+    die Marker-Farben-Zuordnung ist Stufe 2."""
+    side_players = {"home": [], "away": []}
     for p in players or []:
-        side_names.setdefault(p.get("team"), []).append(p.get("username"))
+        side_players.setdefault(p.get("team"), []).append(p)
     timeline, h, a = [], 0, 0
     for g in sorted(goals, key=lambda e: e.get("minute") or 0):
         if g["team"] == "home":
             h += 1
         else:
             a += 1
-        names = side_names.get(g["team"]) or []
-        scored_by = names[0] if len(names) == 1 and names[0] else g.get("scorer")
-        timeline.append({
+        entry = {
             "home": h, "away": a, "team": g["team"], "minute": g["minute"],
-            "period": "regular", "stoppage": 0, "scored_by": scored_by,
-            "event_type": "goal",
-        })
+            "period": "regular", "stoppage": 0, "event_type": "goal",
+        }
+        side = side_players.get(g["team"]) or []
+        if len(side) == 1 and side[0].get("player_id"):
+            entry["scored_by"] = side[0]["player_id"]
+            entry["scored_by_name"] = side[0].get("username") or g.get("scorer")
+        elif g.get("scorer"):
+            entry["scored_by_name"] = g["scorer"]
+        timeline.append(entry)
     return timeline
+
+
+def enrich_tap_timeline(timeline, players):
+    """Tap-Timelines tragen in scored_by/assist_by SPIELER-IDs. Fuer das
+    Highlight-Banner werden die Anzeigenamen ergaenzt (scored_by_name/
+    assist_by_name) — die DB bleibt unberuehrt, nur app_<base>.json."""
+    by_id = {p.get("player_id"): p.get("username") for p in players or []}
+    enriched = []
+    for e in timeline:
+        entry = dict(e)
+        for key in ("scored_by", "assist_by"):
+            name = by_id.get(entry.get(key))
+            if name:
+                entry[f"{key}_name"] = name
+        enriched.append(entry)
+    return enriched
 
 
 def submit_stats(stats_files):
@@ -183,8 +206,9 @@ def main():
     # Torliste fuer den Anker-Modus: Taps gewinnen; sonst die Vision-Tore.
     app_path = f"app_{base}.json"
     if tap_goals:
+        enriched = enrich_tap_timeline(data["score_timeline"], data.get("players"))
         with open(app_path, "w") as f:
-            json.dump(data["score_timeline"], f)
+            json.dump(enriched, f)
         print(f"[pipeline] App-Timeline (Taps): {len(tap_goals)} Tore -> {app_path}")
     elif post and post.get("goals"):
         timeline = build_app_timeline(post["goals"], (data or {}).get("players"))
