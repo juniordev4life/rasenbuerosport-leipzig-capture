@@ -64,8 +64,16 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
 1. venv im neuen Repo neu anlegen (das alte venv ist pfadgebunden, zieht nicht um):
    `python3 -m venv venv && venv/bin/pip install -r requirements.txt`
    (System zusätzlich: ffmpeg, tesseract-ocr + -deu).
-2. Wenn die Festplatte zurück ist: Ziffern-Templates auf 0-9 erweitern
-   (hochstehende Spiele je Skin → samples + Builder).
+2. WEITGEHEND OBSOLET durch den Anker-Modus (`build_anchor_timeline.py`,
+   TRAINING.md Abschnitt 8): Tafeln werden nur noch ERKANNT (selbstkalibrierter
+   Team-Box-Anker ab der 0:0-Anstoßtafel), die Torliste kommt aus der App, die
+   Zuordnung läuft über die Tafel-Minute (OCR der Schützenzeile). Am 11:10
+   validiert: 21/21 Tore verankert, inkl. zweistelliger Stände — da hat die
+   Ziffern-Lesung eine strukturelle Decke (zwei Ziffern, Ein-Ziffer-Region).
+   Ziffern-Templates braucht es nur noch für die „0" (Selbstkalibrierung).
+   OFFEN: Anker-Regionen für premier/cross_nation kalibrieren, in
+   make_highlights als Modus verdrahten (Torliste der App kommt im
+   Office-Betrieb von der API), goalMoment team-unabhängig machen.
 3. Scorer-Eval auf Sohn-vs-CPU-Material mit Wahrheits-Labels laufen lassen
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
    Idee: Parallelbetrieb — die manuellen App-Taps SIND die Wahrheit, der
