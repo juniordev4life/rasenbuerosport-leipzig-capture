@@ -252,9 +252,16 @@ beim Cross-Skin verschwindet das Schützenfoto samt Minute VOR dem Bandende
 (darum verteilte OCR-Samples über den ganzen Block), und die Cross-Minutenbox
 (weiß auf grün) liest nur roh in Graustufen, nicht binarisiert.
 
-Grenzen: kein Elfmeterschießen (läuft weiter über die alte Logik), `goalMoment`
-bleibt leer (die HUD-Referenz ist team-spezifisch — bekannte Baustelle), und
-ohne App-Timeline geht nichts — die Torliste ist Pflicht.
+Im OFFICE-BETRIEB passiert das alles automatisch: `process_highlights` holt
+die Torliste von der API (`GET /recording/timeline`) und legt sie als
+`app_<base>.json` ab; `make_highlights` springt dann von selbst in den
+Anker-Modus. `ANCHOR_MODE=off` erzwingt die klassische Ziffern-Erkennung,
+und bei Anker-Fehlern (z. B. 0:0-Tafel nicht gefunden) fällt `make_highlights`
+automatisch auf sie zurück.
+
+Grenzen: kein Elfmeterschießen (die Pipeline warnt bei `result_type=penalty`),
+`goalMoment` bleibt leer (die HUD-Referenz ist team-spezifisch — bekannte
+Baustelle), und ohne App-Timeline läuft die klassische Erkennung.
 
 ## 9. Welches Material hilft am meisten?
 

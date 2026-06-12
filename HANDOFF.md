@@ -74,8 +74,14 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    ALLE DREI SKINS validiert: bundesliga 21/21, premier 6/6, cross 4/4
    (TRAINING.md Abschnitt 8 — inkl. der Skin-Eigenheiten: Premier animiert,
    Cross blendet das Schützenfoto früh aus, Tap-Minuten weichen bis ~9 min ab).
-   OFFEN: in make_highlights als Modus verdrahten (Torliste der App kommt im
-   Office-Betrieb von der API), goalMoment team-unabhängig machen.
+   VERDRAHTET in den Office-Flow: process_highlights holt die Torliste von der
+   API (GET /recording/timeline, X-Agent-Secret) und legt sie als
+   app_<base>.json ab; make_highlights nutzt dann automatisch den Anker-Modus
+   (ANCHOR_MODE=off erzwingt Klassik; bei Anker-Fehlern automatischer Fallback
+   auf die Ziffern-Erkennung + merge_scorers).
+   OFFEN: goalMoment team-unabhängig machen (Replay-bewusster Schnitt),
+   Elfmeterschießen-Clip im Anker-Modus (Pipeline warnt bei result_type
+   penalty), echter gsutil-Upload mit privatem gcloud-Login verifizieren.
 3. Scorer-Eval auf Sohn-vs-CPU-Material mit Wahrheits-Labels laufen lassen
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
    Idee: Parallelbetrieb — die manuellen App-Taps SIND die Wahrheit, der
