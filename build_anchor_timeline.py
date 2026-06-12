@@ -12,15 +12,26 @@ hat dort eine strukturelle Decke. Dieser Ansatz dreht die Logik um:
      Anstoß-Tafel sicher. Von dort croppt sich das Skript seinen Anker selbst
      (linke Team-Box — innerhalb des Spiels konstant, egal wie hoch der Stand
      steigt). Kein neues Template je Spiel/Team nötig.
-  3) Zuordnung Tafel -> Tor über die MINUTE in der Tafel-Kopfzeile (OCR der
-     Schützenzeile, wie read_minute): Tafeln ohne Minute (Anstoß "LIVE: ...",
-     Halbzeit) und Tafeln, deren Minute zu keinem Tor passt (Einwechslungen),
-     fallen automatisch raus. Reihenfolge dient als Fallback bei OCR-Lücken.
+  3) Zuordnung Tafel -> Tor primär über die REIHENFOLGE (beide chronologisch).
+     Die Minute aus der Tafel (OCR der Schützenzeile, Rezept wie read_minute
+     in build_score_timeline) dient als Filter + Validierung: Tafeln, deren
+     Minute eine FRÜHERE Tafel wiederholt, sind Halbzeit-/Zusammenfassungs-
+     Tafeln (alle drei Skins zeigen dort die bisherigen Schützen) und fliegen
+     raus. App-TAP-Minuten weichen real bis zu ~8 Minuten von den Tafel-Minuten
+     ab (premier-4-2: Tap 28' vs. Tafel 36') — darum ist die Minute bewusst
+     NICHT das primäre Zuordnungssignal.
 
-Ausgabe ist das normale goals_*.json-Schema (cut_highlights-kompatibel).
-goalMoment bleibt None: die HUD-Referenz ist team-spezifisch (BAY/SVW) und
-matcht andere Paarungen nicht — bekannter Folgeschritt.
-Elfmeterschießen behandelt dieser Prototyp NICHT.
+Gelernte Stolperfallen, die dieses Skript abdeckt:
+  - Premier-Tafeln ANIMIEREN (~1.5s): Score/Schützenzeile erscheinen erst nach
+    dem Band -> OCR liest aus der BLOCKMITTE, nicht den ersten Frames.
+  - Schützen-Badge sitzt seitlich (Heim-Tor links, Gast-Tor rechts) -> die
+    engen Seiten-Regionen aus PROFILE['minute'] nutzen (validiertes Rezept),
+    nicht einen breiten Strip.
+
+Ausgabe ist das normale goals_*.json-Schema (cut_highlights-kompatibel, inkl.
+scorer/assist fürs Banner). goalMoment bleibt None: die HUD-Referenz ist
+team-spezifisch — bekannter Folgeschritt. Elfmeterschießen behandelt dieser
+Prototyp NICHT.
 
 Aufruf (Frames müssen extrahiert sein, FPS passend zur Extraktion):
     FRAMES_DIR=frames_bl-11-10 FPS=2 APP_TIMELINE=app_bl-11-10.json \
@@ -41,19 +52,27 @@ PROFILE_NAME = os.environ.get("HUD_PROFILE", "bundesliga")
 APP_TIMELINE = os.environ.get("APP_TIMELINE")
 GOALS_OUT = os.environ.get("GOALS_OUT", "goals_anchor.json")
 BOARDS_OUT = os.environ.get("BOARDS_OUT", "")          # optional: Debug-Liste aller Tafeln
-MINUTE_TOLERANCE = int(os.environ.get("MINUTE_TOLERANCE", "1"))
+MINUTE_TOLERANCE = int(os.environ.get("MINUTE_TOLERANCE", "10"))  # Taps sind unscharf!
 BOARD_THRESHOLD = float(os.environ.get("BOARD_THRESHOLD", "0.7"))
 MIN_STABLE = int(os.environ.get("MIN_STABLE", "2"))
 KICKOFF_SCAN_SECONDS = int(os.environ.get("KICKOFF_SCAN_SECONDS", "240"))
 
 # Anker-Kalibrierung je Skin: Region der linken Team-Box (wird aus der
-# 0:0-Anstoßtafel gecroppt) + Suchfenster mit Lage-Toleranz + Kopfzeilen-Strip
-# fuer die Minuten-OCR. Bei Uebernahme in den Normalbetrieb -> hud_profiles.
+# 0:0-Anstoßtafel gecroppt) + Suchfenster mit Lage-Toleranz. Die Minuten-
+# Regionen kommen aus PROFILE['minute'] (dort bereits je Skin validiert).
+# Bei Uebernahme in den Normalbetrieb -> hud_profiles.
 BOARD_CALIB = {
     "bundesliga": {
         "anchor_region": (560, 920, 320, 50),
         "search_region": (520, 890, 420, 115),
-        "header_strip": (600, 880, 740, 38),
+    },
+    "premier": {
+        "anchor_region": (560, 832, 250, 56),
+        "search_region": (520, 800, 360, 120),
+    },
+    "cross_nation": {
+        "anchor_region": (595, 885, 210, 60),
+        "search_region": (550, 855, 320, 120),
     },
 }
 
@@ -113,18 +132,58 @@ def board_presence(img, anchor):
     return float(cv2.matchTemplate(win, anchor, cv2.TM_CCOEFF_NORMED).max())
 
 
-def read_header_minute(img):
-    """Letzte Zahl der Tafel-Kopfzeile (Schuetzenzeile 'NAME MM''). None, wenn
-    keine Zahl lesbar — z.B. Anstoß-/Halbzeit-Tafel ('LIVE: <Stadion>')."""
-    x, y, w, h = CALIB["header_strip"]
-    gray = cv2.cvtColor(img[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    text = pytesseract.image_to_string(gray, config="--psm 7").strip()
-    nums = re.findall(r"\d+", text)
-    if not nums:
-        return None
-    value = int(nums[-1])
-    return value if 1 <= value <= 120 else None
+# --- Minute von der Tafel lesen — Rezept wie read_minute/build_score_timeline:
+# enge Seiten-Region, methodengerechte Binarisierung, x4-Upscale, psm/Whitelist
+# je Modus ("line": ganze Schuetzenzeile, LETZTE Zahl; "digit": Box, ERSTE Zahl).
+def _threshold(crop, method):
+    if method == "white":
+        b, g, r = cv2.split(crop)
+        mask = ((b > 150) & (g > 150) & (r > 150)).astype("uint8") * 255
+        return cv2.bitwise_not(cv2.resize(mask, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    otsu = cv2.THRESH_BINARY_INV if method == "otsu_inv" else cv2.THRESH_BINARY
+    _, thresh = cv2.threshold(gray, 0, 255, otsu + cv2.THRESH_OTSU)
+    return thresh
+
+
+def _read(thresh, psm, whitelist="0123456789"):
+    thresh = cv2.copyMakeBorder(thresh, 24, 24, 24, 24, cv2.BORDER_CONSTANT, value=255)
+    config = f"--psm {psm}"
+    if whitelist:
+        config += f" -c tessedit_char_whitelist={whitelist}"
+    return pytesseract.image_to_string(thresh, config=config).strip()
+
+
+def read_board_minute(img):
+    """Tor-Minute der Tafel: probiert Heim- und Gast-Region (nur die Schuetzen-
+    Seite ist belegt), je Region zwei Lese-Wege: (1) Binarisierung nach Profil-
+    Methode (Premier 'otsu', Bundesliga 'otsu_inv'), (2) ROH-Graustufen-Fallback
+    — die Cross-Minutenbox (weiss auf gruen) liest NUR roh, beide Otsu-Pfade
+    versagen dort (empirisch geprueft). None bei Anstoß-Tafeln (keine Zahl)."""
+    mn = PROFILE["minute"]
+    mode = mn.get("mode", "digit")
+    whitelist = None if mode == "line" else "0123456789"
+    for side in ("home", "away"):
+        region = mn.get(side)
+        if region is None:
+            continue
+        x, y, w, h, method, psm = region
+        crop = img[y:y + h, x:x + w]
+        raw = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), None,
+                         fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+        for text in (
+            _read(_threshold(crop, method), psm, whitelist),
+            pytesseract.image_to_string(
+                raw, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789").strip(),
+        ):
+            nums = re.findall(r"\d+", text)
+            if not nums:
+                continue
+            value = int(nums[-1] if mode == "line" else nums[0])
+            if 1 <= value <= 120:
+                return value
+    return None
 
 
 # --- Torliste laden ---------------------------------------------------------
@@ -175,11 +234,19 @@ while i < len(presence):
     while j < len(presence) and presence[j] >= BOARD_THRESHOLD:
         j += 1
     if j - i >= MIN_STABLE:
-        # Minute ueber bis zu 4 Frames der Tafel lesen, haeufigster Wert
+        # Minute ueber den GANZEN Block verteilt lesen (Anfang/Mitte/Ende),
+        # haeufigster Wert gewinnt. Grund: die Skins timen unterschiedlich —
+        # Premier animiert die Schuetzenzeile erst REIN (Blockanfang leer),
+        # beim Cross-Skin verschwindet das Schuetzenfoto samt Minute VOR dem
+        # Bandende (Blockende leer). Verteilte Samples decken beides ab.
+        mid = i + max(0, (j - i) // 2 - 1)
+        sample_idx = sorted({i, i + 1, mid, mid + 1, max(i, j - 2), max(i, j - 1)})
         values = []
-        for k in range(i, min(i + 4, j)):
+        for k in sample_idx:
+            if k >= j:
+                continue
             img = cv2.imread(os.path.join(FRAMES_DIR, frames[k]))
-            m = read_header_minute(img)
+            m = read_board_minute(img)
             if m is not None:
                 values.append(m)
         minute = max(set(values), key=values.count) if values else None
@@ -196,46 +263,48 @@ while i < len(presence):
 print(f"Tafeln erkannt: {len(boards)} (stabil >= {MIN_STABLE} Frames, "
       f"Schwelle {BOARD_THRESHOLD})")
 
-# --- Zuordnung Tafel -> Tor ---------------------------------------------------
-# Minute-first: exakte Minute, dann ±Toleranz. Tafeln ohne passende Minute
-# (Anstoß, Halbzeit, Einwechslung) bleiben unzugeordnet. Faellt die OCR fuer
-# eine Tafel aus (None), greift die Reihenfolge als Fallback — aber nur, wenn
-# dadurch kein spaeteres Tor seine Minuten-Tafel verliert.
+# --- Nicht-Tor-Tafeln filtern --------------------------------------------------
+# 1) Anstoß-Tafel (Kalibrierquelle). 2) Halbzeit-/Zusammenfassungs-Tafeln: alle
+# drei Skins zeigen dort die BISHERIGEN Schuetzen -> ihre Minute wiederholt eine
+# fruehere Tafel-Minute. Nur anwenden, solange Tafel-Ueberschuss besteht (zwei
+# echte Tore in derselben Minute sollen nicht rausfallen).
 candidates = [b for b in boards if not b["isKickoff"]]
-assignments = []      # (goal, board)
-unmatched_boards = []
-gi = 0
+filtered = []
+seen_minutes = set()
+surplus = len(candidates) - len(goal_list)
 for b in candidates:
-    if gi >= len(goal_list):
-        unmatched_boards.append(b)
+    m = b["headerMinute"]
+    if surplus > 0 and m is not None and m in seen_minutes:
+        b["reason"] = f"Minute {m} wiederholt sich (Halbzeit-/Summary-Tafel)"
+        filtered.append(b)
+        surplus -= 1
         continue
-    g = goal_list[gi]
-    bm = b["headerMinute"]
-    if bm is not None:
-        if abs(bm - g["minute"]) <= MINUTE_TOLERANCE:
-            assignments.append((g, b))
-            gi += 1
-            continue
-        # passt die Tafel zu einem SPAETEREN Tor? Dann wurde fuer g keine
-        # Tafel gefunden -> Tor ueberspringen (lauter Hinweis am Ende).
-        later = [k for k in range(gi + 1, len(goal_list))
-                 if abs(goal_list[k]["minute"] - bm) <= MINUTE_TOLERANCE]
-        if later:
-            while gi < later[0]:
-                gi += 1
-            assignments.append((goal_list[gi], b))
-            gi += 1
-        else:
-            unmatched_boards.append(b)   # z.B. Einwechslungs-Tafel
-        continue
-    # OCR-Luecke: nur per Reihenfolge zuordnen, wenn genug Tafeln uebrig sind
-    remaining_boards = len(candidates) - candidates.index(b)
-    remaining_goals = len(goal_list) - gi
-    if remaining_boards > remaining_goals:
-        unmatched_boards.append(b)       # vermutlich Halbzeit/Abpfiff-Tafel
-    else:
-        assignments.append((g, b))
-        gi += 1
+    if m is not None:
+        seen_minutes.add(m)
+    b["goalCandidate"] = True
+goal_boards = [b for b in candidates if b.get("goalCandidate")]
+
+# --- Zuordnung: Reihenfolge primaer, Minute als Validierung -------------------
+# Tap-Minuten der App weichen real bis zu ~8 Minuten von den Tafel-Minuten ab —
+# darum NICHT minutengenau zuordnen. Bei Gleichstand der Anzahlen wird in
+# Reihenfolge gezippt; Ueberschuss-Tafeln ohne Minuten-Naehe zu irgendeinem Tor
+# (±MINUTE_TOLERANCE) fliegen zuerst, danach vom Ende (Abpfiff-Tafeln).
+assignments = []
+skipped_boards = list(filtered)
+work = list(goal_boards)
+
+while len(work) > len(goal_list):
+    no_match = [b for b in work
+                if b["headerMinute"] is None
+                or not any(abs(b["headerMinute"] - g["minute"]) <= MINUTE_TOLERANCE
+                           for g in goal_list)]
+    drop = no_match[0] if no_match else work[-1]
+    drop["reason"] = drop.get("reason") or "Ueberschuss (keine Minuten-Naehe zu einem Tor)"
+    skipped_boards.append(drop)
+    work.remove(drop)
+
+for g, b in zip(goal_list, work):
+    assignments.append((g, b))
 
 # --- goals.json schreiben -----------------------------------------------------
 goals = []
@@ -257,27 +326,26 @@ if BOARDS_OUT:
         json.dump(boards, f, indent=2)
 
 # --- Report -------------------------------------------------------------------
-print(f"\n{'Tor':>4} {'Min':>4} {'Seite':>5} {'Stand':>6} | {'Tafel-Sek':>9} "
-      f"{'Tafel-Min':>9}  Frame")
+print(f"\n{'Stand':>6} {'Tap-Min':>7} {'Seite':>5} | {'Tafel-Sek':>9} {'Tafel-Min':>9}"
+      f"  {'Abw.':>5}  Frame")
 for g, b in assignments:
-    flag = "" if (b["headerMinute"] is not None
-                  and abs(b["headerMinute"] - g["minute"]) <= MINUTE_TOLERANCE) else "  <-- per Reihenfolge"
-    print(f"{g['home']}:{g['away']:>2} {g['minute']:>4} {g['team']:>5} "
-          f"{g['home']}:{g['away']:>3}  | {b['videoSecond']:>9} "
-          f"{str(b['headerMinute']):>9}  {b['frame']}{flag}")
+    dev = "" if b["headerMinute"] is None else f"{b['headerMinute'] - g['minute']:+d}"
+    warn = ""
+    if b["headerMinute"] is not None and abs(b["headerMinute"] - g["minute"]) > MINUTE_TOLERANCE:
+        warn = "  <-- Abweichung > Toleranz, Zuordnung pruefen!"
+    print(f"{g['home']}:{g['away']:>2} {g['minute']:>7} {g['team']:>5} | "
+          f"{b['videoSecond']:>9} {str(b['headerMinute']):>9}  {dev:>5}  {b['frame']}{warn}")
 
-missed = [g for g in goal_list if g not in [a[0] for a in assignments]]
-if missed:
-    print(f"\nWARNUNG: {len(missed)} Tor(e) OHNE Tafel — kein Clip moeglich:")
-    for g in missed:
+if len(assignments) < len(goal_list):
+    print(f"\nWARNUNG: {len(goal_list) - len(assignments)} Tor(e) OHNE Tafel — kein Clip moeglich:")
+    for g in goal_list[len(assignments):]:
         print(f"  Minute {g['minute']} ({g['team']}, {g.get('scored_by')})")
-if unmatched_boards:
-    print(f"\nUnzugeordnete Tafeln ({len(unmatched_boards)}) — erwartet: Halbzeit/"
-          f"Einwechslungen/Abpfiff:")
-    for b in unmatched_boards:
-        print(f"  Sek {b['videoSecond']:>4}  Kopfzeilen-Minute {b['headerMinute']}  {b['frame']}")
+if skipped_boards:
+    print(f"\nAussortierte Tafeln ({len(skipped_boards)}):")
+    for b in skipped_boards:
+        print(f"  Sek {b['videoSecond']:>4}  Minute {str(b['headerMinute']):>4}  "
+              f"{b['frame']}  [{b.get('reason', '?')}]")
 
-# Plausibilitaet: Video-Reihenfolge muss der Minuten-Reihenfolge entsprechen
 secs = [b["videoSecond"] for _, b in assignments]
 if secs != sorted(secs):
     print("\nWARNUNG: Tafel-Sekunden nicht monoton — Zuordnung pruefen!")

@@ -218,10 +218,14 @@ verraten die Anstoß-Tafeln — und die müssen nur ERKANNT werden, nicht gelese
    hoch der Stand steigt, egal welche Teams spielen.
 2. Tafel-Präsenz: Der Anker wird über alle Frames gematcht (Tafeln ≥0.99,
    Live-Bild ≤0.35 — sauber trennbar bei Schwelle 0.7).
-3. Zuordnung über die Minute in der Tafel-Kopfzeile (OCR der Schützenzeile):
-   Jede Tafel wird dem Tor mit passender Minute zugeordnet. Anstoß-/Halbzeit-
-   Tafeln und Einwechslungen fallen automatisch raus, OCR-Lücken fängt die
-   Reihenfolge ab.
+3. Zuordnung primär über die REIHENFOLGE (Tore und Tafeln sind beide
+   chronologisch). Die Tafel-Minute (OCR der Schützenzeile, Rezept je Skin aus
+   dem HUD-Profil + Roh-Graustufen-Fallback) dient als Filter und Validierung:
+   Halbzeit-Tafeln zeigen in allen drei Skins die bisherigen Schützen — ihre
+   Minute WIEDERHOLT eine frühere Tafel und fliegt darüber raus. Wichtig: Die
+   App-TAP-Minuten weichen real bis zu ~9 Minuten von den Tafel-Minuten ab
+   (premier: Tap 28' vs. Tafel 36'), darum ist die Minute bewusst NICHT das
+   primäre Zuordnungssignal; der Report zeigt die Abweichung je Tor.
 
 ```bash
 # Frames müssen extrahiert sein (make_highlights-Lauf oder Abschnitt 3),
@@ -236,11 +240,17 @@ HL_INPUT=videos/bl-11-10.mov GOALS_IN=goals_anchor_bl-11-10.json \
 HL_OUTDIR=highlights_bl-11-10-anchor venv/bin/python cut_highlights.py
 ```
 
-Tunebar per Env: `BOARD_THRESHOLD` (0.7), `MINUTE_TOLERANCE` (1 — großzügiger
-stellen, wenn die Minuten aus App-Taps statt vom Events-Screen kommen),
-`BOARDS_OUT` (Debug-Liste aller erkannten Tafeln). Kalibriert ist bisher nur
-`bundesliga` (`BOARD_CALIB` im Skript); weitere Skins brauchen je drei
-Regionen: Anker, Suchfenster, Kopfzeilen-Strip.
+Tunebar per Env: `BOARD_THRESHOLD` (0.7), `MINUTE_TOLERANCE` (10 — Spielraum
+für die Tap-Abweichung; wird nur fürs Aussortieren von Überschuss-Tafeln und
+Warnungen genutzt), `BOARDS_OUT` (Debug-Liste aller erkannten Tafeln).
+
+Kalibriert und validiert sind ALLE drei Skins (`BOARD_CALIB` im Skript):
+bundesliga 21/21 (bl-11-10), premier 6/6 (premier-league-4-2, Tap-Abweichung
+bis +9), cross_nation 4/4 (cross-3-1). Skin-Eigenheiten, die das Skript
+abdeckt: Premier-Tafeln ANIMIEREN (~1,5 s — Schützenzeile erst ab Blockmitte),
+beim Cross-Skin verschwindet das Schützenfoto samt Minute VOR dem Bandende
+(darum verteilte OCR-Samples über den ganzen Block), und die Cross-Minutenbox
+(weiß auf grün) liest nur roh in Graustufen, nicht binarisiert.
 
 Grenzen: kein Elfmeterschießen (läuft weiter über die alte Logik), `goalMoment`
 bleibt leer (die HUD-Referenz ist team-spezifisch — bekannte Baustelle), und

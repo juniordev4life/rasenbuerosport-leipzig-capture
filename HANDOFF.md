@@ -71,8 +71,10 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    validiert: 21/21 Tore verankert, inkl. zweistelliger Stände — da hat die
    Ziffern-Lesung eine strukturelle Decke (zwei Ziffern, Ein-Ziffer-Region).
    Ziffern-Templates braucht es nur noch für die „0" (Selbstkalibrierung).
-   OFFEN: Anker-Regionen für premier/cross_nation kalibrieren, in
-   make_highlights als Modus verdrahten (Torliste der App kommt im
+   ALLE DREI SKINS validiert: bundesliga 21/21, premier 6/6, cross 4/4
+   (TRAINING.md Abschnitt 8 — inkl. der Skin-Eigenheiten: Premier animiert,
+   Cross blendet das Schützenfoto früh aus, Tap-Minuten weichen bis ~9 min ab).
+   OFFEN: in make_highlights als Modus verdrahten (Torliste der App kommt im
    Office-Betrieb von der API), goalMoment team-unabhängig machen.
 3. Scorer-Eval auf Sohn-vs-CPU-Material mit Wahrheits-Labels laufen lassen
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
