@@ -121,8 +121,18 @@ def make_still_segment(png, dur, out_path, out_fps=30, fade_in=False, fade_out=F
 
 
 def xfade_chain(segments, out_path, xfade=XFADE):
-    """Verkettet Segmente mit weichem Crossfade (Video xfade + Audio acrossfade).
-    Re-encodet (kein -c copy), weil xfade Frames verrechnet."""
+    """Verkettet Segmente mit weichem Video-Crossfade (xfade). Re-encodet
+    (kein -c copy), weil xfade Frames verrechnet.
+
+    Audio bewusst NICHT per acrossfade: dessen Kaskade lieferte im Verbund mit
+    der xfade-Videokette zu KURZE Tonspuren (gemessen: 44.3s Video vs. 34.2s
+    Audio -> Ton lief dem Bild davon und endete vor dem Video). Stattdessen
+    wird die Tonspur mit DERSELBEN Mathematik wie das Video gebaut: jedes
+    Segment (ausser dem letzten) auf `dauer - xfade` getrimmt — denn genau dort
+    beginnt im Video das naechste Segment — und deterministisch konkateniert.
+    Gesamtlaenge Audio == Gesamtlaenge Video, das Spiel-Audio startet exakt
+    mit dem Spiel-Bild. aformat vereinheitlicht Abtastrate/Layout, damit
+    concat auch gemischte Quellen (anullsrc-Stille vs. Capture-AAC) verdaut."""
     if len(segments) == 1:
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", segments[0],
                         "-c", "copy", out_path], check=True)
@@ -136,15 +146,18 @@ def xfade_chain(segments, out_path, xfade=XFADE):
         out_v = f"[v{i}]"
         vparts.append(f"{prev_v}[{i}:v]xfade=transition=fade:duration={xfade}:offset={cum - xfade:.3f}{out_v}")
         prev_v, cum = out_v, cum + durs[i] - xfade
-    aparts, prev_a = [], "[0:a]"
-    for i in range(1, len(segments)):
-        out_a = f"[a{i}]"
-        aparts.append(f"{prev_a}[{i}:a]acrossfade=d={xfade}{out_a}")
-        prev_a = out_a
+    aparts, alabels = [], []
+    for i in range(len(segments)):
+        keep = durs[i] - (xfade if i < len(segments) - 1 else 0)
+        aparts.append(
+            f"[{i}:a]atrim=0:{keep:.3f},asetpts=PTS-STARTPTS,"
+            f"aformat=sample_rates=48000:channel_layouts=stereo[at{i}]")
+        alabels.append(f"[at{i}]")
+    aparts.append("".join(alabels) + f"concat=n={len(segments)}:v=0:a=1[aout]")
     fc = ";".join(vparts + aparts)
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error"] + inputs +
-        ["-filter_complex", fc, "-map", prev_v, "-map", prev_a,
+        ["-filter_complex", fc, "-map", prev_v, "-map", "[aout]",
          "-c:v", "libx265", "-preset", "medium", "-crf", "28", "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-movflags", "+faststart", out_path],
         check=True)
