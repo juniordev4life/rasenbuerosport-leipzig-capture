@@ -36,6 +36,12 @@ Agent-Endpoints: Shared Secret im Header `X-Agent-Secret`, api-seitig env
        die Aufnahme wirklich läuft. LÄUFT ÜBER DIE PROVISORISCHE recording_id,
        nicht über die echte game_id.
 
+  GET  /api/v1/recording/timeline?game_id=<uuid>
+       -> data: { game_id, result_type, score_timeline: [...] }
+       Torliste des Spiels (App-Taps) — holt process_highlights vor dem
+       Pipeline-Lauf, um die Tore im ANKER-MODUS zu verankern (Tafel-Präsenz
+       statt Ziffern-Lesen).
+
   PATCH /api/v1/games/:gameId
        body: { "video_status": "processing"|"ready"|"failed",
                "highlight_url"?: "..." }

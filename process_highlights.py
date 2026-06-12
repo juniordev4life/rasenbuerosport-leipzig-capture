@@ -1,6 +1,9 @@
 """Highlight-Pipeline (losgelöster Prozess, vom office_agent nach dem Stop gestartet).
 
-Drei Schritte für ein Spiel:
+Vier Schritte für ein Spiel:
+  0) Torliste von der API holen (GET /recording/timeline) -> app_<base>.json.
+     Damit läuft make_highlights im ANKER-MODUS (Tafel-Präsenz + Torliste,
+     robust bis zweistellige Stände); ohne Timeline klassische Erkennung.
   1) make_highlights.py auf die Aufnahme -> Reel `<base>_highlights.mp4`
   2) Reel per gsutil öffentlich in den Bucket laden
   3) video_status + highlight_url ans Spiel PATCHen (ready / failed)
@@ -47,6 +50,36 @@ def patch_status(status, **extra):
         print(f"[pipeline] PATCH ({status}) fehlgeschlagen: {e}")
 
 
+def fetch_app_timeline(base):
+    """Torliste des Spiels von der API holen (GET /recording/timeline) und als
+    app_<base>.json ablegen — make_highlights findet sie ueber seine Konvention
+    und nutzt dann automatisch den ANKER-MODUS (Tafel-Praesenz + Torliste statt
+    Ziffern-Lesen, robust bis zweistellige Staende). None bei Fehler oder
+    leerer Timeline — dann laeuft die klassische Ziffern-Erkennung."""
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/recording/timeline?game_id={GAME_ID}",
+            headers={"X-Agent-Secret": AGENT_SECRET})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read() or "{}").get("data") or {}
+    except Exception as e:
+        print(f"[pipeline] Timeline-Abruf fehlgeschlagen ({e}) — klassische Erkennung.")
+        return None
+    timeline = data.get("score_timeline") or []
+    goals = [e for e in timeline if e.get("event_type", "goal") == "goal"]
+    if not goals:
+        print("[pipeline] Keine Tore in der App-Timeline — klassische Erkennung.")
+        return None
+    if data.get("result_type") == "penalty":
+        print("[pipeline] HINWEIS: Spiel ging ins Elfmeterschiessen — der "
+              "Schiessen-Clip wird im Anker-Modus noch nicht erzeugt.")
+    path = f"app_{base}.json"
+    with open(path, "w") as f:
+        json.dump(timeline, f)
+    print(f"[pipeline] App-Timeline geladen: {len(goals)} Tore -> {path}")
+    return path
+
+
 def main():
     if not GAME_ID or not VIDEO:
         print("[pipeline] PIPE_GAME_ID / PIPE_VIDEO fehlen — Abbruch.")
@@ -59,7 +92,8 @@ def main():
     base = os.path.splitext(os.path.basename(VIDEO))[0]
     reel = f"{base}_highlights.mp4"   # make_highlights legt das Reel im CWD ab
 
-    # 1) Reel erzeugen (Vision-only; App-Tore/Schütze-Banner kommen als Stufe 2).
+    # 1) Torliste holen (aktiviert den Anker-Modus) + Reel erzeugen.
+    fetch_app_timeline(base)
     print(f"[pipeline] make_highlights für {VIDEO} ...")
     result = subprocess.run([sys.executable, "make_highlights.py", VIDEO])
     if result.returncode != 0 or not os.path.exists(reel):

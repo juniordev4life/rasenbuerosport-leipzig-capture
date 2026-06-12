@@ -64,8 +64,24 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
 1. venv im neuen Repo neu anlegen (das alte venv ist pfadgebunden, zieht nicht um):
    `python3 -m venv venv && venv/bin/pip install -r requirements.txt`
    (System zusätzlich: ffmpeg, tesseract-ocr + -deu).
-2. Wenn die Festplatte zurück ist: Ziffern-Templates auf 0-9 erweitern
-   (hochstehende Spiele je Skin → samples + Builder).
+2. WEITGEHEND OBSOLET durch den Anker-Modus (`build_anchor_timeline.py`,
+   TRAINING.md Abschnitt 8): Tafeln werden nur noch ERKANNT (selbstkalibrierter
+   Team-Box-Anker ab der 0:0-Anstoßtafel), die Torliste kommt aus der App, die
+   Zuordnung läuft über die Tafel-Minute (OCR der Schützenzeile). Am 11:10
+   validiert: 21/21 Tore verankert, inkl. zweistelliger Stände — da hat die
+   Ziffern-Lesung eine strukturelle Decke (zwei Ziffern, Ein-Ziffer-Region).
+   Ziffern-Templates braucht es nur noch für die „0" (Selbstkalibrierung).
+   ALLE DREI SKINS validiert: bundesliga 21/21, premier 6/6, cross 4/4
+   (TRAINING.md Abschnitt 8 — inkl. der Skin-Eigenheiten: Premier animiert,
+   Cross blendet das Schützenfoto früh aus, Tap-Minuten weichen bis ~9 min ab).
+   VERDRAHTET in den Office-Flow: process_highlights holt die Torliste von der
+   API (GET /recording/timeline, X-Agent-Secret) und legt sie als
+   app_<base>.json ab; make_highlights nutzt dann automatisch den Anker-Modus
+   (ANCHOR_MODE=off erzwingt Klassik; bei Anker-Fehlern automatischer Fallback
+   auf die Ziffern-Erkennung + merge_scorers).
+   OFFEN: goalMoment team-unabhängig machen (Replay-bewusster Schnitt),
+   Elfmeterschießen-Clip im Anker-Modus (Pipeline warnt bei result_type
+   penalty), echter gsutil-Upload mit privatem gcloud-Login verifizieren.
 3. Scorer-Eval auf Sohn-vs-CPU-Material mit Wahrheits-Labels laufen lassen
    (~10 Spiele / 30-50 Tore) → Hybrid-Trefferquote messen, dann entscheiden.
    Idee: Parallelbetrieb — die manuellen App-Taps SIND die Wahrheit, der

@@ -183,24 +183,48 @@ def main():
         print(f"HUD-Profil '{profile}' ist noch nicht kalibriert. Bekannt: {list(HUD_PROFILES)}")
         sys.exit(1)
 
-    print(f"[2/4] Tore erkennen (HUD-Profil: {profile}) ...")
-    run_step("build_score_timeline.py", {
-        "FRAMES_DIR": frames_dir,
-        "GOALS_OUT": goals_json,
-        "SCORE_TIMELINE_OUT": timeline_json,
-        "HUD_PROFILE": profile,
-        "FPS": str(FPS),
-    })
-
-    # Optional: Schuetze/Vorlage aus einem App-Export einmischen (per Stand-Sequenz).
-    # Quelle: Env APP_TIMELINE, sonst Konvention app_<name>.json neben dem Video.
+    # Tor-Erkennung, zwei Wege (Quelle der Torliste: Env APP_TIMELINE, sonst
+    # Konvention app_<name>.json neben dem Video — im Office-Betrieb legt
+    # process_highlights sie dort ab, von der API geholt):
+    #   ANKER-MODUS (Default, wenn eine App-Timeline vorliegt): Tafel-Praesenz
+    #   + App-Torliste statt Ziffern-Lesen — robust bis zweistellige Staende,
+    #   Schuetze/Vorlage stecken direkt im goals_json (kein Merge noetig).
+    #   KLASSIK (Fallback / ANCHOR_MODE=off / keine Timeline): Ziffern-
+    #   Erkennung + optionaler merge_scorers-Schritt.
     app_timeline = os.environ.get("APP_TIMELINE") or f"app_{base}.json"
-    if os.path.exists(app_timeline):
-        print(f"[2b/4] App-Daten mergen ({app_timeline}) ...")
-        env = {"GOALS_IN": goals_json, "APP_TIMELINE": app_timeline, "GOALS_OUT": goals_json}
-        if os.environ.get("PLAYERS"):
-            env["PLAYERS"] = os.environ["PLAYERS"]
-        run_step("merge_scorers.py", env)
+    use_anchor = (os.environ.get("ANCHOR_MODE", "auto") != "off"
+                  and os.path.exists(app_timeline))
+    anchored = False
+    if use_anchor:
+        print(f"[2/4] Tore verankern (Anker-Modus, Torliste: {app_timeline}) ...")
+        try:
+            run_step("build_anchor_timeline.py", {
+                "FRAMES_DIR": frames_dir,
+                "GOALS_OUT": goals_json,
+                "HUD_PROFILE": profile,
+                "FPS": str(FPS),
+                "APP_TIMELINE": app_timeline,
+            })
+            anchored = True
+        except subprocess.CalledProcessError:
+            print("      Anker-Modus fehlgeschlagen — Fallback auf Ziffern-Erkennung.")
+
+    if not anchored:
+        print(f"[2/4] Tore erkennen (HUD-Profil: {profile}) ...")
+        run_step("build_score_timeline.py", {
+            "FRAMES_DIR": frames_dir,
+            "GOALS_OUT": goals_json,
+            "SCORE_TIMELINE_OUT": timeline_json,
+            "HUD_PROFILE": profile,
+            "FPS": str(FPS),
+        })
+        # Schuetze/Vorlage aus dem App-Export einmischen (per Stand-Sequenz).
+        if os.path.exists(app_timeline):
+            print(f"[2b/4] App-Daten mergen ({app_timeline}) ...")
+            env = {"GOALS_IN": goals_json, "APP_TIMELINE": app_timeline, "GOALS_OUT": goals_json}
+            if os.environ.get("PLAYERS"):
+                env["PLAYERS"] = os.environ["PLAYERS"]
+            run_step("merge_scorers.py", env)
 
     goals = json.load(open(goals_json))
     if not goals:

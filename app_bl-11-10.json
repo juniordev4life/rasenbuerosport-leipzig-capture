@@ -1,0 +1,212 @@
+[
+  {
+    "home": 1,
+    "away": 0,
+    "team": "home",
+    "minute": 3,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 2,
+    "away": 0,
+    "team": "home",
+    "minute": 5,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "J. Musiala",
+    "event_type": "goal"
+  },
+  {
+    "home": 3,
+    "away": 0,
+    "team": "home",
+    "minute": 8,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 4,
+    "away": 0,
+    "team": "home",
+    "minute": 10,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "L. Diaz",
+    "event_type": "goal"
+  },
+  {
+    "home": 5,
+    "away": 0,
+    "team": "home",
+    "minute": 12,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 6,
+    "away": 0,
+    "team": "home",
+    "minute": 20,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 7,
+    "away": 0,
+    "team": "home",
+    "minute": 25,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 8,
+    "away": 0,
+    "team": "home",
+    "minute": 27,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 9,
+    "away": 0,
+    "team": "home",
+    "minute": 37,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "J. Musiala",
+    "event_type": "goal"
+  },
+  {
+    "home": 10,
+    "away": 0,
+    "team": "home",
+    "minute": 43,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "H. Kane",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 0,
+    "team": "home",
+    "minute": 45,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "L. Diaz",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 1,
+    "team": "away",
+    "minute": 51,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 2,
+    "team": "away",
+    "minute": 55,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 3,
+    "team": "away",
+    "minute": 58,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 4,
+    "team": "away",
+    "minute": 66,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 5,
+    "team": "away",
+    "minute": 68,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 6,
+    "team": "away",
+    "minute": 71,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 7,
+    "team": "away",
+    "minute": 75,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "F. Nmecha",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 8,
+    "team": "away",
+    "minute": 80,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 9,
+    "team": "away",
+    "minute": 84,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  },
+  {
+    "home": 11,
+    "away": 10,
+    "team": "away",
+    "minute": 87,
+    "period": "regular",
+    "stoppage": 0,
+    "scored_by": "S. Guirassy",
+    "event_type": "goal"
+  }
+]
