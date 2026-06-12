@@ -155,6 +155,14 @@ def main():
         print(f"[pipeline] Aufnahme nicht gefunden: {VIDEO}")
         patch_status("failed")
         return
+    # Klassische Fehlkonfiguration abfangen: GCS_BUCKET muss der Firebase-
+    # Bucket sein (FIREBASE_STORAGE_BUCKET der API), NICHT der Ordnername —
+    # sonst laufen alle Uploads gegen einen fremden/nicht existenten Bucket.
+    if GCS_BUCKET and GCS_BUCKET == HIGHLIGHTS_PREFIX:
+        print(f"[pipeline] WARNUNG: GCS_BUCKET == HIGHLIGHTS_PREFIX "
+              f"('{GCS_BUCKET}') — das ist sehr wahrscheinlich vertauscht. "
+              f"GCS_BUCKET = Firebase-Bucket (z.B. <projekt>.firebasestorage.app), "
+              f"HIGHLIGHTS_PREFIX = Ordner darin.")
 
     base = os.path.splitext(os.path.basename(VIDEO))[0]
     reel = f"{base}_highlights.mp4"   # make_highlights legt das Reel im CWD ab
