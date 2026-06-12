@@ -22,3 +22,5 @@ highlights_*/
 command.json
 boards_*.json
 app_game_*.json
+stats_*/
+events_*.json
