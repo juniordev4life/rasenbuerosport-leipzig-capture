@@ -1,12 +1,18 @@
 """Highlight-Pipeline (losgelöster Prozess, vom office_agent nach dem Stop gestartet).
 
-Vier Schritte für ein Spiel:
-  0) Torliste von der API holen (GET /recording/timeline) -> app_<base>.json.
-     Damit läuft make_highlights im ANKER-MODUS (Tafel-Präsenz + Torliste,
-     robust bis zweistellige Stände); ohne Timeline klassische Erkennung.
-  1) make_highlights.py auf die Aufnahme -> Reel `<base>_highlights.mp4`
-  2) Reel per gsutil öffentlich in den Bucket laden
-  3) video_status + highlight_url ans Spiel PATCHen (ready / failed)
+Ablauf für ein Spiel:
+  0) Torliste + Aufstellung von der API holen (GET /recording/timeline).
+  1) Nachspiel-Extraktion (extract_postmatch.py) auf dem Video-Ende:
+     - Stats-Screens (Übersicht/Pässe/Abwehr) -> Bucket -> POST /recording/stats
+       (ersetzt den Foto-Upload, schaltet den Match-Report frei)
+     - OHNE Taps zusätzlich: Events-Tab -> Claude Vision -> Torliste
+       (Zero-Tracking). 1v1: Seite == einziger Spieler der Seite. Bei
+       pending-Spielen wird die Timeline per POST /recording/finalize
+       nachgetragen (Ergebnis + nachgelagerte ELO).
+  2) make_highlights.py -> Reel (ANKER-MODUS, sobald eine Torliste existiert —
+     aus Taps ODER aus dem Events-Screen; sonst klassische Erkennung)
+  3) Reel per gsutil öffentlich in den Bucket laden
+  4) video_status + highlight_url ans Spiel PATCHen (ready / failed)
 
 Bewusst eigenständig statt im Agent: make_highlights braucht cv2 (venv) und
 läuft Minuten — der Agent-Poll-Loop bleibt so frei. Konfiguration kommt
@@ -50,34 +56,95 @@ def patch_status(status, **extra):
         print(f"[pipeline] PATCH ({status}) fehlgeschlagen: {e}")
 
 
-def fetch_app_timeline(base):
-    """Torliste des Spiels von der API holen (GET /recording/timeline) und als
-    app_<base>.json ablegen — make_highlights findet sie ueber seine Konvention
-    und nutzt dann automatisch den ANKER-MODUS (Tafel-Praesenz + Torliste statt
-    Ziffern-Lesen, robust bis zweistellige Staende). None bei Fehler oder
-    leerer Timeline — dann laeuft die klassische Ziffern-Erkennung."""
+def api_post(path, body, timeout=120):
+    """POST an die API (X-Agent-Secret). Fehler nicht fatal — data oder None."""
+    payload = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{API_BASE}{path}", data=payload, method="POST",
+        headers={"X-Agent-Secret": AGENT_SECRET, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or "{}").get("data")
+    except Exception as e:
+        print(f"[pipeline] POST {path} fehlgeschlagen: {e}")
+        return None
+
+
+def fetch_timeline():
+    """Spieldaten von der API: {score_timeline, players, pending, result_type}.
+    None bei Fehler (API nicht erreichbar o.ae.)."""
     try:
         req = urllib.request.Request(
             f"{API_BASE}/recording/timeline?game_id={GAME_ID}",
             headers={"X-Agent-Secret": AGENT_SECRET})
         with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read() or "{}").get("data") or {}
+            return json.loads(r.read() or "{}").get("data") or {}
     except Exception as e:
-        print(f"[pipeline] Timeline-Abruf fehlgeschlagen ({e}) — klassische Erkennung.")
+        print(f"[pipeline] Timeline-Abruf fehlgeschlagen ({e}).")
         return None
-    timeline = data.get("score_timeline") or []
-    goals = [e for e in timeline if e.get("event_type", "goal") == "goal"]
-    if not goals:
-        print("[pipeline] Keine Tore in der App-Timeline — klassische Erkennung.")
+
+
+def run_postmatch(base, skip_events):
+    """Nachspiel-Extraktion (extract_postmatch.py) auf dem Video-Ende:
+    Stats-Screens immer, Events-Torliste nur ohne Taps (skip_events=False).
+    Gibt {goals, stats_files} zurueck oder None bei Fehlschlag."""
+    events_out = f"events_{base}.json"
+    env = {**os.environ, "VIDEO": VIDEO, "STATS_DIR": f"stats_{base}",
+           "EVENTS_OUT": events_out}
+    if skip_events:
+        env["SKIP_EVENTS"] = "1"
+    result = subprocess.run([sys.executable, "extract_postmatch.py"], env=env)
+    if result.returncode != 0 or not os.path.exists(events_out):
+        print("[pipeline] Nachspiel-Extraktion fehlgeschlagen — weiter ohne.")
         return None
-    if data.get("result_type") == "penalty":
-        print("[pipeline] HINWEIS: Spiel ging ins Elfmeterschiessen — der "
-              "Schiessen-Clip wird im Anker-Modus noch nicht erzeugt.")
-    path = f"app_{base}.json"
-    with open(path, "w") as f:
-        json.dump(timeline, f)
-    print(f"[pipeline] App-Timeline geladen: {len(goals)} Tore -> {path}")
-    return path
+    return json.load(open(events_out))
+
+
+def build_app_timeline(goals, players):
+    """Vision-Tore + Aufstellung -> App-Timeline (laufender Stand). 1v1: die
+    Seite hat genau einen Spieler -> dessen Username als Schuetze; sonst
+    bleibt der In-Game-Name aus dem Events-Screen im Banner stehen."""
+    side_names = {"home": [], "away": []}
+    for p in players or []:
+        side_names.setdefault(p.get("team"), []).append(p.get("username"))
+    timeline, h, a = [], 0, 0
+    for g in sorted(goals, key=lambda e: e.get("minute") or 0):
+        if g["team"] == "home":
+            h += 1
+        else:
+            a += 1
+        names = side_names.get(g["team"]) or []
+        scored_by = names[0] if len(names) == 1 and names[0] else g.get("scorer")
+        timeline.append({
+            "home": h, "away": a, "team": g["team"], "minute": g["minute"],
+            "period": "regular", "stoppage": 0, "scored_by": scored_by,
+            "event_type": "goal",
+        })
+    return timeline
+
+
+def submit_stats(stats_files):
+    """Stats-PNGs oeffentlich in den Bucket laden und der API melden — gleiche
+    Claude-Vision-Auswertung wie beim Foto-Upload, schaltet den Report frei."""
+    if not stats_files:
+        return
+    if not GCS_BUCKET:
+        print("[pipeline] GCS_BUCKET nicht gesetzt — Stats-Upload uebersprungen.")
+        return
+    images = {}
+    for tab, path in stats_files.items():
+        obj = f"{HIGHLIGHTS_PREFIX}/stats/{GAME_ID}/{tab}.png"
+        up = subprocess.run(
+            ["gsutil", "-h", "Content-Type:image/png", "cp", "-a", "public-read",
+             path, f"gs://{GCS_BUCKET}/{obj}"])
+        if up.returncode == 0:
+            images[tab] = f"https://storage.googleapis.com/{GCS_BUCKET}/{obj}"
+    if not images:
+        print("[pipeline] Kein Stats-Bild hochgeladen.")
+        return
+    result = api_post("/recording/stats", {"game_id": GAME_ID, "images": images})
+    if result:
+        print(f"[pipeline] Match-Stats angewendet: {result.get('applied')}")
 
 
 def main():
@@ -92,8 +159,44 @@ def main():
     base = os.path.splitext(os.path.basename(VIDEO))[0]
     reel = f"{base}_highlights.mp4"   # make_highlights legt das Reel im CWD ab
 
-    # 1) Torliste holen (aktiviert den Anker-Modus) + Reel erzeugen.
-    fetch_app_timeline(base)
+    # 0) Spieldaten holen: Taps, Aufstellung, pending-Status.
+    data = fetch_timeline()
+    tap_goals = [e for e in (data.get("score_timeline") if data else []) or []
+                 if e.get("event_type", "goal") == "goal"]
+    if data and data.get("result_type") == "penalty":
+        print("[pipeline] HINWEIS: Spiel ging ins Elfmeterschiessen — der "
+              "Schiessen-Clip wird im Anker-Modus noch nicht erzeugt.")
+
+    # 1) Nachspiel-Extraktion: Stats-Screens immer; Events-Torliste nur ohne Taps.
+    post = run_postmatch(base, skip_events=bool(tap_goals))
+    if post:
+        submit_stats(post.get("stats_files"))
+
+    # Torliste fuer den Anker-Modus: Taps gewinnen; sonst die Vision-Tore.
+    app_path = f"app_{base}.json"
+    if tap_goals:
+        with open(app_path, "w") as f:
+            json.dump(data["score_timeline"], f)
+        print(f"[pipeline] App-Timeline (Taps): {len(tap_goals)} Tore -> {app_path}")
+    elif post and post.get("goals"):
+        timeline = build_app_timeline(post["goals"], (data or {}).get("players"))
+        with open(app_path, "w") as f:
+            json.dump(timeline, f)
+        print(f"[pipeline] Vision-Timeline (Events-Screen): {len(timeline)} Tore -> {app_path}")
+        if data and data.get("pending"):
+            finalized = api_post("/recording/finalize",
+                                 {"game_id": GAME_ID, "score_timeline": timeline})
+            if finalized:
+                print(f"[pipeline] Spiel finalisiert: "
+                      f"{finalized.get('score_home')}:{finalized.get('score_away')}")
+        elif data:
+            print("[pipeline] Spiel ist nicht pending — Timeline nur fuer die "
+                  "Highlights genutzt, kein Finalize.")
+    else:
+        print("[pipeline] Keine Torliste (weder Taps noch Events-Screen) — "
+              "klassische Ziffern-Erkennung.")
+
+    # 2) Reel erzeugen.
     print(f"[pipeline] make_highlights für {VIDEO} ...")
     result = subprocess.run([sys.executable, "make_highlights.py", VIDEO])
     if result.returncode != 0 or not os.path.exists(reel):

@@ -100,6 +100,19 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
      die Karte kann kein yuv420p; sonst `nv12`. OBS/QuickTime/Teams VORHER
      schließen — sie sperren die Karte. API_BASE-Default zeigt auf 3001.)
    - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
+4b. ZERO-TRACKING gebaut (extract_postmatch.py + process_highlights): Die
+   Spieler blättern nach Abpfiff durchs Stats-Menü (machen sie eh) — die
+   Pipeline scannt das Video-Ende, erkennt die Menü-Tabs (Template
+   templates/menu/tab_strip.png, skin-/team-unabhängig validiert an BL- und
+   Cross-Aufnahmen), zieht je Stats-Tab den schärfsten Frame (-> Bucket ->
+   POST /recording/stats, ersetzt den Foto-Upload) und liest OHNE Taps die
+   Torliste aus dem Events-Tab per Claude Vision (-> Anker-Modus + POST
+   /recording/finalize bei pending-Spielen: Ergebnis + nachgelagerte ELO).
+   1v1: Seite == einziger Spieler der Seite (Username); 2v2: In-Game-Name
+   bleibt im Banner (Marker-Farben-Zuordnung = detect_scorer, Stufe 2).
+   VORAUSSETZUNG auf dem Pipeline-Host: ANTHROPIC_API_KEY im Agent-Env.
+   OFFEN: erster Live-Lauf des Vision-Calls (alles andere an echtem Material
+   beider Spiele validiert); Events-Extraktion bei Verlängerung >90' prüfen.
 5. ERLEDIGT (MVP, Vision-only): Highlights verdrahtet. Nach dem Stop startet der
    Agent `process_highlights.py` (eigener Prozess): `make_highlights` → Reel →
    `gsutil cp -a public-read` nach `gs://$GCS_BUCKET/$HIGHLIGHTS_PREFIX/<gameId>.mp4`

@@ -37,10 +37,22 @@ Agent-Endpoints: Shared Secret im Header `X-Agent-Secret`, api-seitig env
        nicht über die echte game_id.
 
   GET  /api/v1/recording/timeline?game_id=<uuid>
-       -> data: { game_id, result_type, score_timeline: [...] }
-       Torliste des Spiels (App-Taps) — holt process_highlights vor dem
-       Pipeline-Lauf, um die Tore im ANKER-MODUS zu verankern (Tafel-Präsenz
-       statt Ziffern-Lesen).
+       -> data: { game_id, result_type, pending, score_timeline: [...],
+                  players: [{player_id, team, username}] }
+       Torliste (App-Taps) + Aufstellung — holt process_highlights vor dem
+       Pipeline-Lauf. Anker-Modus nutzt die Torliste; die Aufstellung dient
+       der 1v1-Schützen-Zuordnung im Zero-Tracking-Fall.
+
+  POST /api/v1/recording/finalize   body: { game_id, score_timeline }
+       Zero-Tracking: traegt die aus dem Events-Screen extrahierte Timeline
+       bei einem PENDING-Spiel nach (Ergebnis + nachgelagerte ELO/Push).
+
+  POST /api/v1/recording/stats      body: { game_id, images: {overview?, passes?, defense?} }
+       Stats-Screens aus dem Video (statt Foto-Upload) — gleiche Claude-
+       Vision-Auswertung, schaltet den Match-Report frei.
+
+Fuer die Events-Torliste (Zero-Tracking) braucht der Pipeline-Host
+ANTHROPIC_API_KEY im Env (Claude Vision liest den Events-Tab).
 
   PATCH /api/v1/games/:gameId
        body: { "video_status": "processing"|"ready"|"failed",
