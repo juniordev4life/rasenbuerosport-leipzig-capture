@@ -316,8 +316,10 @@ for g, b in assignments:
         "scoredBy": g["team"],
         "minute": g["minute"],
         "goalMoment": None,
-        "scorer": g.get("scored_by"),
-        "assist": g.get("assist_by"),
+        # Anzeigenamen bevorzugen: scored_by/assist_by tragen in Tap-Timelines
+        # SPIELER-IDs (Firebase-UIDs), die *_name-Felder die lesbaren Namen.
+        "scorer": g.get("scored_by_name") or g.get("scored_by"),
+        "assist": g.get("assist_by_name") or g.get("assist_by"),
     })
 with open(GOALS_OUT, "w") as f:
     json.dump(goals, f, indent=2)

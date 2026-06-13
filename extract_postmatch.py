@@ -231,6 +231,10 @@ def main():
     event_paths = [p for p, _ in by_tab["events"]]
     if SKIP_EVENTS:
         print("[postmatch] SKIP_EVENTS=1 — Torliste übersprungen.")
+    elif not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[postmatch] ANTHROPIC_API_KEY fehlt im Env — Events-Torliste "
+              "uebersprungen. Key ins Agent-Env legen (gleicher Wert wie in "
+              "der API-.env), dann liest Claude Vision den Events-Tab.")
     elif not event_paths:
         print("[postmatch] Kein Events-Tab im Abspann gefunden — keine Torliste.")
     else:
