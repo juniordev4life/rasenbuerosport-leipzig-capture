@@ -143,10 +143,12 @@ def cut(start, dur, out, overlay=None, full_frame=False):
         )
         cmd += ["-loop", "1", "-i", overlay,
                 "-filter_complex", fc,
-                "-map", "[v]", "-map", "0:a?"]
+                "-map", "[v]"]
+    # -an: tonlos. Aufnahmen laufen ohne Audiospur (avfoundation-Drift), und
+    # die Highlights brauchen keinen Ton.
     cmd += ["-t", str(dur),
             "-c:v", VIDEO_CODEC, "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF), *VIDEO_EXTRA,
-            "-c:a", "aac", "-movflags", "+faststart", out]
+            "-an", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
 
 

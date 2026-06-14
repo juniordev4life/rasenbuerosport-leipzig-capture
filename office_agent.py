@@ -101,8 +101,10 @@ def capture_input_args():
 
     shlex-Quoting: avfoundation-GERÄTENAMEN statt Indizes verwenden — die
     Indizes sind zwischen Enumerationen nicht stabil (Continuity-Kameras!).
-    Namen mit Leerzeichen in Anführungszeichen:
-      CAPTURE_INPUT='-f avfoundation ... -i "USB3.0 Video:USB3.0 Audio"'
+    Namen mit Leerzeichen in Anführungszeichen. Audio bewusst weglassen
+    (":none") — Bild/Ton driften bei avfoundation auseinander, Highlights
+    laufen ohne Ton:
+      CAPTURE_INPUT='-f avfoundation ... -i "USB3.0 Video:none"'
     """
     override = os.environ.get("CAPTURE_INPUT")
     if override:

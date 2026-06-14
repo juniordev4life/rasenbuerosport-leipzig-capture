@@ -102,9 +102,9 @@ def _fps(path):
 
 
 def make_still_segment(png, dur, out_path, out_fps=30, fade_in=False, fade_out=False):
-    """Standbild -> dur-Sekunden-Clip (1920x1080, H.265, stille Tonspur). Die
-    Bildrate (out_fps) muss zu den Tor-Clips passen (sonst xfade-Fehler).
-    fade_in/out blendet am Anfang/Ende von/zu Schwarz."""
+    """Standbild -> dur-Sekunden-Clip (1920x1080, H.265, tonlos). Die Bildrate
+    (out_fps) muss zu den Tor-Clips passen (sonst xfade-Fehler). fade_in/out
+    blendet am Anfang/Ende von/zu Schwarz."""
     vf = ["scale=1920:1080", f"fps={out_fps}", "format=yuv420p"]
     if fade_in:
         vf.append("fade=t=in:st=0:d=0.4")
@@ -113,29 +113,20 @@ def make_still_segment(png, dur, out_path, out_fps=30, fade_in=False, fade_out=F
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error",
          "-loop", "1", "-t", str(dur), "-i", png,
-         "-f", "lavfi", "-t", str(dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
          "-vf", ",".join(vf),
          "-c:v", "libx265", "-preset", "medium", "-crf", "28", "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
-         "-c:a", "aac", out_path],
+         "-an", out_path],
         check=True)
 
 
 def xfade_chain(segments, out_path, xfade=XFADE):
     """Verkettet Segmente mit weichem Video-Crossfade (xfade). Re-encodet
-    (kein -c copy), weil xfade Frames verrechnet.
-
-    Audio bewusst NICHT per acrossfade: dessen Kaskade lieferte im Verbund mit
-    der xfade-Videokette zu KURZE Tonspuren (gemessen: 44.3s Video vs. 34.2s
-    Audio -> Ton lief dem Bild davon und endete vor dem Video). Stattdessen
-    wird die Tonspur mit DERSELBEN Mathematik wie das Video gebaut: jedes
-    Segment (ausser dem letzten) auf `dauer - xfade` getrimmt — denn genau dort
-    beginnt im Video das naechste Segment — und deterministisch konkateniert.
-    Gesamtlaenge Audio == Gesamtlaenge Video, das Spiel-Audio startet exakt
-    mit dem Spiel-Bild. aformat vereinheitlicht Abtastrate/Layout, damit
-    concat auch gemischte Quellen (anullsrc-Stille vs. Capture-AAC) verdaut."""
+    (kein -c copy), weil xfade Frames verrechnet. Tonlos (-an): die Aufnahmen
+    haben keine Audiospur (avfoundation-Drift), die Highlights brauchen keinen
+    Ton — damit entfaellt auch jede A/V-Sync-Mathematik."""
     if len(segments) == 1:
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", segments[0],
-                        "-c", "copy", out_path], check=True)
+                        "-c:v", "copy", "-an", out_path], check=True)
         return
     durs = [_duration(s) for s in segments]
     inputs = []
@@ -146,20 +137,12 @@ def xfade_chain(segments, out_path, xfade=XFADE):
         out_v = f"[v{i}]"
         vparts.append(f"{prev_v}[{i}:v]xfade=transition=fade:duration={xfade}:offset={cum - xfade:.3f}{out_v}")
         prev_v, cum = out_v, cum + durs[i] - xfade
-    aparts, alabels = [], []
-    for i in range(len(segments)):
-        keep = durs[i] - (xfade if i < len(segments) - 1 else 0)
-        aparts.append(
-            f"[{i}:a]atrim=0:{keep:.3f},asetpts=PTS-STARTPTS,"
-            f"aformat=sample_rates=48000:channel_layouts=stereo[at{i}]")
-        alabels.append(f"[at{i}]")
-    aparts.append("".join(alabels) + f"concat=n={len(segments)}:v=0:a=1[aout]")
-    fc = ";".join(vparts + aparts)
+    fc = ";".join(vparts)
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error"] + inputs +
-        ["-filter_complex", fc, "-map", prev_v, "-map", "[aout]",
+        ["-filter_complex", fc, "-map", prev_v,
          "-c:v", "libx265", "-preset", "medium", "-crf", "28", "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-movflags", "+faststart", out_path],
+         "-an", "-movflags", "+faststart", out_path],
         check=True)
 
 
