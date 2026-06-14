@@ -39,9 +39,9 @@ Dateinamen (`base` = Dateiname ohne Endung). Für `videos/bl-test-1.mov`:
 ## 1. Video durch die volle Pipeline jagen
 
 ```bash
-venv/bin/python make_highlights.py videos/bl-test-1.mov
+venv/bin/python src/make_highlights.py videos/bl-test-1.mov
 # Skin wird automatisch erkannt. Erzwingen, falls die Erkennung danebenliegt:
-venv/bin/python make_highlights.py videos/bl-test-1.mov --hud bundesliga
+venv/bin/python src/make_highlights.py videos/bl-test-1.mov --hud bundesliga
 ```
 
 Profile: `bundesliga`, `premier`, `cross_nation`. Danach liegen die oben
@@ -82,7 +82,7 @@ HUD_PROFILE=bundesliga \
 FPS=2 \
 GOALS_OUT=goals_bl-test-1.json \
 SCORE_TIMELINE_OUT=score_timeline_bl-test-1.json \
-venv/bin/python build_score_timeline.py
+venv/bin/python src/build_score_timeline.py
 ```
 
 `FPS=2` ist wichtig — `make_highlights` extrahiert mit 2 fps; nur dann stimmen
@@ -134,7 +134,7 @@ ergänzt du eine Ziffer:
    die Samples (zeigt gelesen vs. erwartet):
 
    ```bash
-   venv/bin/python build_templates_bundesliga.py
+   venv/bin/python src/tools/build_templates_bundesliga.py
    # -> templates/bundesliga/home_3.png + away_3.png, + Validierungsausgabe
    ```
 
@@ -185,7 +185,7 @@ So misst du die Trefferquote an echtem Material gegen Wahrheits-Labels:
 ```bash
 # labels.json: je Tor ein Eintrag, Zuordnung über den Stand (siehe labels_example.json)
 ANTHROPIC_API_KEY=... \
-venv/bin/python detect_scorer.py eval videos/bl-test-1.mov \
+venv/bin/python src/detect_scorer.py eval videos/bl-test-1.mov \
   goals_bl-test-1.json labels.json
 ```
 
@@ -231,13 +231,13 @@ verraten die Anstoß-Tafeln — und die müssen nur ERKANNT werden, nicht gelese
 # Frames müssen extrahiert sein (make_highlights-Lauf oder Abschnitt 3),
 # die Torliste im App-Format daneben liegen (app_<base>.json):
 FRAMES_DIR=frames_bl-11-10 FPS=2 \
-APP_TIMELINE=app_bl-11-10.json \
+APP_TIMELINE=fixtures/app_bl-11-10.json \
 GOALS_OUT=goals_anchor_bl-11-10.json \
-venv/bin/python build_anchor_timeline.py
+venv/bin/python src/build_anchor_timeline.py
 
 # Ergebnis ist cut_highlights-kompatibel (inkl. scorer/assist fürs Banner):
 HL_INPUT=videos/bl-11-10.mov GOALS_IN=goals_anchor_bl-11-10.json \
-HL_OUTDIR=highlights_bl-11-10-anchor venv/bin/python cut_highlights.py
+HL_OUTDIR=highlights_bl-11-10-anchor venv/bin/python src/cut_highlights.py
 ```
 
 Tunebar per Env: `BOARD_THRESHOLD` (0.7), `MINUTE_TOLERANCE` (10 — Spielraum

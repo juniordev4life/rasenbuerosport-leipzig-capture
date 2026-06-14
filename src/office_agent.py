@@ -78,6 +78,8 @@ import sys
 import time
 import urllib.request
 
+from paths import script
+
 # --- Konfiguration (env) ----------------------------------------------------
 API_BASE = os.environ.get("API_BASE", "http://localhost:3001/api/v1")
 AGENT_SECRET = os.environ.get("AGENT_SECRET", "")          # X-Agent-Secret
@@ -212,7 +214,7 @@ def start_highlight_pipeline(game_id, video_path):
         return
     env = {**os.environ, "PIPE_GAME_ID": game_id, "PIPE_VIDEO": video_path}
     try:
-        subprocess.Popen([sys.executable, "process_highlights.py"],
+        subprocess.Popen([sys.executable, script("process_highlights.py")],
                          env=env, start_new_session=True)
         print(f"  Highlight-Pipeline gestartet (Spiel {game_id}).")
     except Exception as e:

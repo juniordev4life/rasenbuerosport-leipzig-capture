@@ -34,6 +34,8 @@ import subprocess
 import sys
 import urllib.request
 
+from paths import script
+
 API_BASE = os.environ.get("API_BASE", "http://localhost:3001/api/v1")
 AGENT_SECRET = os.environ.get("AGENT_SECRET", "")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
@@ -93,7 +95,7 @@ def run_postmatch(base, skip_events):
            "EVENTS_OUT": events_out}
     if skip_events:
         env["SKIP_EVENTS"] = "1"
-    result = subprocess.run([sys.executable, "extract_postmatch.py"], env=env)
+    result = subprocess.run([sys.executable, script("extract_postmatch.py")], env=env)
     if result.returncode != 0 or not os.path.exists(events_out):
         print("[pipeline] Nachspiel-Extraktion fehlgeschlagen — weiter ohne.")
         return None
@@ -230,7 +232,7 @@ def main():
 
     # 2) Reel erzeugen.
     print(f"[pipeline] make_highlights für {VIDEO} ...")
-    result = subprocess.run([sys.executable, "make_highlights.py", VIDEO])
+    result = subprocess.run([sys.executable, script("make_highlights.py"), VIDEO])
     if result.returncode != 0 or not os.path.exists(reel):
         # Häufigster gutartiger Fall: keine Tore erkannt -> kein Reel.
         print(f"[pipeline] Kein Reel erzeugt (rc={result.returncode}, reel da: {os.path.exists(reel)}).")

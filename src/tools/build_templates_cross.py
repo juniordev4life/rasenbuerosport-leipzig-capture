@@ -10,7 +10,12 @@ eigenes "0" aus dem Anstoss-Board. Quellen: vier Board-Samples (0:0, 1:0, 2:1, 3
     source venv/bin/activate && python build_templates_cross.py
 """
 import os
+
 import cv2
+
+# Dev-Tool, manuell aus dem Repo-Root gestartet. In den Root wechseln, damit
+# die relativen templates/- und samples/-Pfade unveraendert stimmen.
+os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 HOME = (850, 888, 60, 74)
 AWAY = (1005, 888, 85, 74)

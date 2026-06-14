@@ -7,6 +7,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from paths import ASSETS
+
 # --- Konfiguration (zum Justieren) -----------------------------------------
 # Pfade ueberschreibbar per Env (vom Orchestrator gesetzt), sonst Defaults.
 INPUT = os.environ.get("HL_INPUT", "erste-halbzeit.mov")
@@ -44,7 +46,7 @@ VIDEO_EXTRA = ["-tag:v", "hvc1"]   # HEVC-Tag fuer QuickTime/Apple-Kompatibilita
 # eingeblendet und die dynamischen Felder darauf gezeichnet. Sonst Fallback:
 # schlichtes cv2-Banner. Eigene Grafik einfach als overlay_template.png ablegen
 # (transparenter Hintergrund) und die Positionen unten anpassen.
-TEMPLATE = "overlay_template.png"
+TEMPLATE = os.path.join(ASSETS, "overlay_template.png")
 FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 # Torschütze (gross, links) + Vorlage (kleiner, RECHTS daneben). Die Vorlage wird
 # DYNAMISCH hinter den Namen gesetzt (x = Name-Ende + Abstand) — so passt auch der

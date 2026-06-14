@@ -39,6 +39,8 @@ import tempfile
 
 import cv2
 
+from paths import TEMPLATES
+
 VIDEO = os.environ.get("VIDEO")
 FRAMES_DIR = os.environ.get("FRAMES_DIR")
 TAIL_SECONDS = int(os.environ.get("TAIL_SECONDS", "420"))
@@ -49,7 +51,7 @@ SKIP_EVENTS = os.environ.get("SKIP_EVENTS") == "1"
 EVENTS_MODEL = os.environ.get("EVENTS_MODEL", "claude-sonnet-4-6")
 MAX_EVENT_FRAMES = int(os.environ.get("MAX_EVENT_FRAMES", "12"))
 
-STRIP_TEMPLATE = "templates/menu/tab_strip.png"
+STRIP_TEMPLATE = os.path.join(TEMPLATES, "menu", "tab_strip.png")
 STRIP_SEARCH = (500, 150, 950, 110)          # x, y, w, h Suchfenster Tab-Zeile
 STRIP_THRESHOLD = 0.6
 ACTIVE_RATIO = 1.15                           # aktives Label vs. Schnitt der übrigen

@@ -18,6 +18,9 @@ Score:
 Minute: pro Tor-Seite (home/away) — die Tafel ist je nach Schuetze gespiegelt.
   None = fuer diese Seite noch nicht kalibriert.
 """
+import os
+
+from paths import TEMPLATES
 
 HUD_PROFILES = {
     "bundesliga": {
@@ -32,7 +35,7 @@ HUD_PROFILES = {
             "mode": "template",
             "home_region": (931, 936, 22, 24),   # Heim-Ziffer links vom Strich
             "away_region": (967, 936, 22, 24),    # Gast-Ziffer rechts vom Strich
-            "templates": "templates/bundesliga",
+            "templates": os.path.join(TEMPLATES, "bundesliga"),
             "threshold": 0.5,
         },
         "minute": {
@@ -49,7 +52,7 @@ HUD_PROFILES = {
         # Wiederholungs- UND Elfmeterschiessen-Erkennung.
         "hud": {
             "region": (185, 55, 195, 65),               # "BAY"/"SVW"-Boxen (stabil, kontrastreich)
-            "ref": "templates/bundesliga/hud_ref.png",
+            "ref": os.path.join(TEMPLATES, "bundesliga", "hud_ref.png"),
             "threshold": 0.5,
         },
         # Elfmeterschiessen (mode "hud_gap"): langer HUD-weg-Block am Spielende
@@ -72,7 +75,7 @@ HUD_PROFILES = {
             "mode": "template",
             "home_region": (864, 831, 45, 88),
             "away_region": (1008, 822, 62, 92),
-            "templates": "templates/premier",
+            "templates": os.path.join(TEMPLATES, "premier"),
             "threshold": 0.5,
         },
         "minute": {
@@ -86,7 +89,7 @@ HUD_PROFILES = {
         # Jubel/Replay ist das HUD weg. Fuer den adaptiven Clip-Start.
         "hud": {
             "region": (80, 56, 390, 56),
-            "ref": "templates/premier/hud_ref.png",
+            "ref": os.path.join(TEMPLATES, "premier", "hud_ref.png"),
             "threshold": 0.45,
         },
     },
@@ -99,7 +102,7 @@ HUD_PROFILES = {
             "mode": "template",
             "home_region": (850, 888, 60, 74),
             "away_region": (1005, 888, 85, 74),
-            "templates": "templates/cross_nation",
+            "templates": os.path.join(TEMPLATES, "cross_nation"),
             "threshold": 0.5,
         },
         "minute": {
@@ -109,7 +112,7 @@ HUD_PROFILES = {
         },
         "hud": {
             "region": (90, 48, 200, 78),               # gruenes V-Logo + PSG/AVL-Box
-            "ref": "templates/cross_nation/hud_ref.png",
+            "ref": os.path.join(TEMPLATES, "cross_nation", "hud_ref.png"),
             "threshold": 0.45,
         },
         # Elfmeterschiessen (mode "label"): Beim cross-Skin bleibt waehrend des
@@ -122,7 +125,7 @@ HUD_PROFILES = {
         "shootout": {
             "mode": "label",
             "label_region": (150, 106, 150, 28),       # untere HUD-Zeile (Uhr bzw. "ELFMETER")
-            "label_ref": "templates/cross_nation/elfmeter_ref.png",
+            "label_ref": os.path.join(TEMPLATES, "cross_nation", "elfmeter_ref.png"),
             "label_threshold": 0.7,
             "green_region": (560, 560, 800, 400),
             "green_min": 0.30,

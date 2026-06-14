@@ -8,8 +8,13 @@ kontrast-normalisiert verglichen wird. Reines cv2 — kein Tesseract.
     source venv/bin/activate && python build_templates.py
 """
 import os
+
 import cv2
 import numpy as np
+
+# Dev-Tool, manuell aus dem Repo-Root gestartet. In den Root wechseln, damit
+# die relativen templates/- und frames_*-Pfade unveraendert stimmen.
+os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 D = "frames_premier-league-4-2"
 HOME = (864, 831, 45, 88)

@@ -20,6 +20,7 @@ import sys
 
 from detect_skin import detect_skin_from_dir
 from hud_profiles import HUD_PROFILES
+from paths import ASSETS, script
 
 # Sampling-Rate fuers Frame-Extrahieren. 2 fps ist sicherer, weil manche
 # Anstoß-Tafeln nur kurz stehen; 1 fps ist schneller (wie in der Testhalbzeit).
@@ -27,8 +28,8 @@ FPS = 2
 
 # Intro/Outro-Branding (optional): liegen intro.png + outro.png vor, werden sie
 # als Splash/Abspann an jeden Tor-Clip UND ans Reel gesetzt, mit Crossfades.
-INTRO_IMG = "intro.png"
-OUTRO_IMG = "outro.png"
+INTRO_IMG = os.path.join(ASSETS, "intro.png")
+OUTRO_IMG = os.path.join(ASSETS, "outro.png")
 INTRO_DUR = 3.0    # Sekunden Splash am Anfang
 OUTRO_DUR = 2.5    # Sekunden Abspann am Ende
 XFADE = 0.6        # Sekunden Crossfade zwischen Segmenten
@@ -61,9 +62,9 @@ def extract_frames(video, frames_dir):
     )
 
 
-def run_step(script, env_overrides):
+def run_step(script_path, env_overrides):
     """Ruft eines der bestehenden Skripte mit gesetzten Env-Variablen auf."""
-    subprocess.run([sys.executable, script], check=True,
+    subprocess.run([sys.executable, script_path], check=True,
                    env={**os.environ, **env_overrides})
 
 
@@ -194,7 +195,7 @@ def main():
     if use_anchor:
         print(f"[2/4] Tore verankern (Anker-Modus, Torliste: {app_timeline}) ...")
         try:
-            run_step("build_anchor_timeline.py", {
+            run_step(script("build_anchor_timeline.py"), {
                 "FRAMES_DIR": frames_dir,
                 "GOALS_OUT": goals_json,
                 "HUD_PROFILE": profile,
@@ -207,7 +208,7 @@ def main():
 
     if not anchored:
         print(f"[2/4] Tore erkennen (HUD-Profil: {profile}) ...")
-        run_step("build_score_timeline.py", {
+        run_step(script("build_score_timeline.py"), {
             "FRAMES_DIR": frames_dir,
             "GOALS_OUT": goals_json,
             "SCORE_TIMELINE_OUT": timeline_json,
@@ -220,7 +221,7 @@ def main():
             env = {"GOALS_IN": goals_json, "APP_TIMELINE": app_timeline, "GOALS_OUT": goals_json}
             if os.environ.get("PLAYERS"):
                 env["PLAYERS"] = os.environ["PLAYERS"]
-            run_step("merge_scorers.py", env)
+            run_step(script("merge_scorers.py"), env)
 
     goals = json.load(open(goals_json))
     if not goals:
@@ -228,7 +229,7 @@ def main():
         return
 
     print(f"[3/4] {len(goals)} Tor-Clip(s) schneiden ...")
-    run_step("cut_highlights.py", {
+    run_step(script("cut_highlights.py"), {
         "HL_INPUT": video,
         "GOALS_IN": goals_json,
         "HL_OUTDIR": clips_dir,

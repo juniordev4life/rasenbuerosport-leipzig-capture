@@ -1,5 +1,9 @@
 # FC26 Vision-Experiment — Arbeitsstand & Übergabe
 
+> ⚠️ Historischer POC-Schnappschuss. Befehle/Pfade hier stammen aus der Zeit
+> VOR dem `src/`-Umbau (alle Skripte lagen im Root). Aktuelle Pfade: Code in
+> `src/`, Start via `./start_agent.sh`. Tagesaktueller Stand: `HANDOFF.md`.
+
 > **Was das ist:** Lern-/Experimentier-Projekt zur Computer-Vision-Pipeline
 >   für FC26-Spielaufnahmen. Dieses Dokument hält den **tatsächlich
 >   erreichten Stand** fest (Stand: vierte Hands-on-Session) und dient als
