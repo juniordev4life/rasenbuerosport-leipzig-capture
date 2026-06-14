@@ -15,7 +15,10 @@ cd "$(dirname "$0")"
 
 API_ENV="${API_ENV:-../rasenbuerosport-leipzig-api/.env}"
 HIGHLIGHTS_PREFIX="${HIGHLIGHTS_PREFIX:-highlights-dev}"
-POLL_INTERVAL="${POLL_INTERVAL:-1}"
+# 5s: der Agent muss ein "start"-Kommando nur in wenigen Sekunden bemerken.
+# Seltener pollen = weniger API-Pings (~0,5 Mio./Monat statt ~2,6 Mio. bei 1s),
+# Cloud Run bleibt im Gratis-Request-Kontingent.
+POLL_INTERVAL="${POLL_INTERVAL:-5}"
 # Audiogerät bewusst NICHT eingebunden (":none"): avfoundation lässt Bild und
 # Ton mit leicht versetzten Takten laufen, der Ton driftet über lange
 # Aufnahmen weg -> sichtbarer A/V-Versatz in den Highlights. Tonlos = kein
