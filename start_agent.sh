@@ -16,7 +16,11 @@ cd "$(dirname "$0")"
 API_ENV="${API_ENV:-../rasenbuerosport-leipzig-api/.env}"
 HIGHLIGHTS_PREFIX="${HIGHLIGHTS_PREFIX:-highlights-dev}"
 POLL_INTERVAL="${POLL_INTERVAL:-1}"
-CAPTURE_INPUT="${CAPTURE_INPUT:--f avfoundation -framerate 30 -video_size 1920x1080 -pixel_format uyvy422 -i \"USB3.0 Video:USB3.0 Audio\"}"
+# Audiogerät bewusst NICHT eingebunden (":none"): avfoundation lässt Bild und
+# Ton mit leicht versetzten Takten laufen, der Ton driftet über lange
+# Aufnahmen weg -> sichtbarer A/V-Versatz in den Highlights. Tonlos = kein
+# Drift. Die Highlights sprechen für sich.
+CAPTURE_INPUT="${CAPTURE_INPUT:--f avfoundation -framerate 30 -video_size 1920x1080 -pixel_format uyvy422 -i \"USB3.0 Video:none\"}"
 CAPTURE_DEVICE_NAME="USB3.0 Video"
 
 fail=0
