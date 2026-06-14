@@ -51,12 +51,12 @@ Schützenerkennung.
 ## Pipeline starten (Beispiel)
 ```bash
 # venv im neuen Repo zuerst anlegen (siehe Nächste Schritte 1):
-venv/bin/python make_highlights.py videos/<spiel>.mov   # genaue Flags: STAND.md
+venv/bin/python src/make_highlights.py videos/<spiel>.mov   # genaue Flags: docs/FC26_VISION_POC_STAND.md
 # optional mit App-Toren (Schütze/Vorlage): app_<spiel>.json daneben legen
 
 # Agent-Test auf dem Mac (ohne API/Box, Testbild):
 echo '{"action":"start","game_id":"test1"}' > command.json
-LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
+LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
 # in einem zweiten Terminal: action auf "stop" setzen
 ```
 
@@ -94,7 +94,7 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    - App: `npm run dev`, Browser `localhost:5173`
    - Agent: `AGENT_SECRET=<secret> CAPTURE_INPUT='-f avfoundation -framerate 30
      -video_size 1920x1080 -pixel_format uyvy422 -i "USB3.0 Video:USB3.0 Audio"'
-     python3 office_agent.py`
+     python3 src/office_agent.py`  # oder einfach ./start_agent.sh
      (Gerätenamen via `ffmpeg -f avfoundation -list_devices true -i ""` —
      NAMEN nutzen, nicht Indizes: nicht stabil. `-pixel_format uyvy422` nötig,
      die Karte kann kein yuv420p; sonst `nv12`. OBS/QuickTime/Teams VORHER
@@ -117,7 +117,7 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
    Agent `process_highlights.py` (eigener Prozess): `make_highlights` → Reel →
    `gsutil cp -a public-read` nach `gs://$GCS_BUCKET/$HIGHLIGHTS_PREFIX/<gameId>.mp4`
    → PATCH (processing → ready + `highlight_url`, sonst failed). Voraussetzungen:
-   venv mit cv2 (Agent daher mit `venv/bin/python office_agent.py` starten, weil
+   venv mit cv2 (Agent daher mit `venv/bin/python src/office_agent.py` starten, weil
    die Pipeline cv2 braucht), `gcloud`-Login für gsutil, und die env-Variablen
    `GCS_BUCKET=<FIREBASE_STORAGE_BUCKET>` + `HIGHLIGHTS_PREFIX` (Prod: `highlights`,
    lokal: `highlights-dev`). Test am Mac braucht ein echtes Spielvideo (Testbild
@@ -150,10 +150,20 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python office_agent.py
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
 
-## Wichtigste Dateien
-- `make_highlights.py` — Orchestrator (Frames → Skin → Timeline → optional
+## Projektstruktur
+Aller Code liegt in `src/`, gestartet wird über `./start_agent.sh` (Root).
+Pfade sind CWD-unabhängig über `src/paths.py` verankert.
+- `src/office_agent.py` — Aufnahme-Agent (Poll-Loop, ffmpeg). Startet die
+  Pipeline `src/process_highlights.py` als eigenen Prozess.
+- `src/make_highlights.py` — Orchestrator (Frames → Skin → Timeline → optional
   Merge → Schnitt → Reel).
-- `build_score_timeline.py` / `detect_skin.py` / `hud_profiles.py` — Erkennung.
-- `cut_highlights.py` — Schnitt + Banner. `merge_scorers.py` — App-Merge.
-- `office_agent.py` / `detect_scorer.py` — Office-Agent / Scorer-Gerüst.
-- `build_templates*.py` — Templates aus `samples/` erzeugen.
+- `src/extract_postmatch.py` — Nachspiel: Stats-Screens + Events-Torliste.
+- `src/build_anchor_timeline.py` / `build_score_timeline.py` / `merge_scorers.py`
+  — Tor-Erkennung (Anker-Modus / klassisch / App-Merge).
+- `src/cut_highlights.py` — Schnitt + Banner. `src/detect_skin.py` /
+  `src/hud_profiles.py` — Skin-Erkennung + Profile. `src/detect_scorer.py` —
+  2v2-Schützen-Gerüst (Stufe 2).
+- `src/tools/build_templates*.py` — Dev-Tools, erzeugen Ziffern-Templates aus
+  `samples/`.
+- `templates/` CV-Templates · `assets/` Branding (intro/outro/overlay) ·
+  `fixtures/` Ground-Truth-Timelines · `docs/` Historie.

@@ -20,7 +20,12 @@ Ziffern-Subregionen (datengetrieben gemessen, Spaltenprojektion):
     source venv/bin/activate && python build_templates_bundesliga.py
 """
 import os
+
 import cv2
+
+# Dev-Tool, manuell aus dem Repo-Root gestartet. In den Root wechseln, damit
+# die relativen templates/- und samples/-Pfade unveraendert stimmen.
+os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 HOME = (931, 936, 22, 24)   # umschliesst die Heim-Ziffer mit kleinem Rand
 AWAY = (967, 936, 22, 24)   # umschliesst die Gast-Ziffer mit kleinem Rand

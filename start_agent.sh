@@ -98,4 +98,4 @@ ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
 CAPTURE_INPUT="$CAPTURE_INPUT" \
 POLL_INTERVAL="$POLL_INTERVAL" \
 PYTHONUNBUFFERED=1 \
-exec venv/bin/python3 office_agent.py
+exec venv/bin/python3 src/office_agent.py
