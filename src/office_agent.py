@@ -111,16 +111,30 @@ def capture_input_args():
     override = os.environ.get("CAPTURE_INPUT")
     if override:
         return shlex.split(override)
-    if platform.system() == "Linux":   # Office-i7: echte Capture-Box
+    if platform.system() == "Linux":   # Office-i7 (NUC5i7RYH): echte Capture-Box
         dev = os.environ.get("CAPTURE_DEV", "/dev/video0")
-        return ["-f", "v4l2", "-framerate", "30", "-video_size", "1920x1080", "-i", dev]
+        # -use_wallclock_as_timestamps 1 ist PFLICHT: die MacroSilicon-USB3.0-
+        # Karte liefert kaputte Frame-Timestamps. Ohne das Flag bekommt eine
+        # zeit-/dauerbasierte Aufnahme 0 Frames (und ein VA-API-Encode crasht
+        # dann bei leerem Input) — am Gerät verifiziert. input_format yuyv422 =
+        # das von der Karte gelieferte Format (siehe v4l2-ctl --list-formats-ext).
+        return ["-f", "v4l2", "-use_wallclock_as_timestamps", "1",
+                "-framerate", "30", "-video_size", "1920x1080",
+                "-input_format", "yuyv422", "-i", dev]
     # Mac/Dev: Testbild statt echter Box. -re = in Echtzeit (wie eine echte
     # Capture-Box), damit Start/Stop-Timing beim Entwickeln realistisch ist.
     return ["-re", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30"]
 
 
 def encode_args():
-    """Encoder. Portabel: libx264. Auf dem i7 später ENCODE_ARGS='-c:v h264_qsv ...'."""
+    """Encoder. Default portabel: libx264 (Software, Mac/Dev).
+
+    Auf dem NUC5i7RYH (Broadwell/Iris 6100) Hardware-Encode per VA-API — am
+    Gerät verifiziert (NICHT QSV/libmfx, das ist auf Broadwell+modernem Linux
+    tot). Dazu ENCODE_ARGS setzen (kommt nach dem -i, vor dem Output — die
+    Reihenfolge passt zur Kommando-Konstruktion):
+      ENCODE_ARGS='-vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v h264_vaapi -b:v 6M'
+    """
     return shlex.split(os.environ.get("ENCODE_ARGS", "-c:v libx264 -preset veryfast -crf 23"))
 
 

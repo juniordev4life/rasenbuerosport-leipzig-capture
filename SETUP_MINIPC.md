@@ -103,6 +103,23 @@ Die `--list-formats-ext`-Ausgabe ist das Linux-Pendant zur macOS-Pixelformat-Eig
 mit „format not supported" ab. Und: nur ein Prozess darf `/dev/video0` öffnen
 (kein paralleler Stream), sonst „device busy".
 
+### Am Gerät verifiziert (16.06.2026, MacroSilicon USB3.0 Video)
+Die Karte liefert `YUYV` 1920×1080 (bis 60fps) auf `/dev/video0`. Aufnahme +
+VA-API-Encode mit echtem PS5/FC26-Signal in Echtzeit getestet. Die zwei
+verifizierten Env-Werte für den Agent:
+
+```bash
+CAPTURE_INPUT='-f v4l2 -use_wallclock_as_timestamps 1 -framerate 30 -video_size 1920x1080 -input_format yuyv422 -i /dev/video0'
+ENCODE_ARGS='-vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v h264_vaapi -b:v 6M'
+```
+
+‼️ `-use_wallclock_as_timestamps 1` ist PFLICHT für diese Karte: sie liefert
+kaputte Frame-Timestamps. Ohne das Flag bekommt eine dauerbasierte Aufnahme
+0 Frames, und der VA-API-Encoder crasht dann bei leerem Input (Segfault). Mit
+dem Flag läuft die Aufnahme stabil in Echtzeit. (Der Linux-Default in
+`office_agent.py` enthält das Flag bereits; die `ENCODE_ARGS` müssen gesetzt
+werden, sonst encodet der Agent in Software-libx264.)
+
 ## 6. Dauerbetrieb (optional, empfohlen)
 - Im BIOS „**Auto Power On after power loss / Restore on AC**" aktivieren → der
   Rechner startet nach einem Stromausfall von selbst wieder.
