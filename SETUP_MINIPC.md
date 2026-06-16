@@ -6,8 +6,9 @@ Rest (Aufnahme-Agent + Verarbeitung) wird danach per SSH aus der Ferne eingerich
 
 ## Hardware
 - Intel NUC5i7RYH — Core i7-5557U (**Broadwell / Gen8**, 2 Kerne / 4 Threads,
-  Iris Graphics 6100). Älteres Gerät (2015), reicht für die Capture-Box —
-  bestimmt aber unten die Treiberwahl (Gen8 = `i965`, nicht der neue iHD-Treiber).
+  Iris Graphics 6100). Älteres Gerät (2015), reicht für die Capture-Box. Der
+  vorinstallierte iHD-Treiber (`intel-media-va-driver`) treibt die Iris 6100
+  für H.264-Encode — am echten Gerät verifiziert.
 - Kit: RAM + SSD selbst bestücken. 16 GB DDR3L empfohlen. Zwei Laufwerks-Bays
   (M.2 + 2,5"): am besten eine größere 2,5"-SSD (z.B. 1 TB), dann füllen die
   Roh-`.mov`-Aufnahmen die Platte nicht.
@@ -44,26 +45,30 @@ Gerät, das dauerhaft läuft.)
 ## 3. Benötigte Pakete installieren
 ```bash
 sudo apt -y install ffmpeg python3-venv python3-pip git \
-  v4l-utils vainfo i965-va-driver \
+  v4l-utils vainfo intel-media-va-driver-non-free \
   tesseract-ocr tesseract-ocr-deu avahi-daemon
 ```
 (`avahi-daemon` = damit der Rechner im LAN als `<hostname>.local` erreichbar ist,
 unabhängig von der wechselnden IP.)
-(Hardware-Encode-Treiber: dieser NUC ist **Broadwell / Gen8 → `i965-va-driver`**,
-NICHT das neuere `intel-media-va-driver` (iHD) — das unterstützt erst Gen9 /
-Skylake aufwärts und greift auf der Iris 6100 nicht. `tesseract` = Texterkennung;
-`v4l-utils`/`vainfo` nur zum Prüfen.)
+(Hardware-Encode-Treiber: `intel-media-va-driver` (iHD). Entgegen der Faustregel
+„iHD erst ab Gen9/Skylake" treibt iHD 24.1.0 die Broadwell-Iris-6100 für
+H.264-Encode — am echten Gerät verifiziert. Sollte eine künftige Treiberversion
+Broadwell fallen lassen, ist `i965-va-driver` der Fallback. `tesseract` =
+Texterkennung; `v4l-utils`/`vainfo` nur zum Prüfen.)
 
 ## 4. Hardware-Encode (VA-API) prüfen
-Auf diesem Broadwell-NUC läuft der Hardware-Encode über VA-API mit dem
-`i965`-Treiber. Treiber erzwingen und prüfen:
+Der vorinstallierte iHD-Treiber genügt — kein `LIBVA_DRIVER_NAME`-Override nötig:
 ```bash
-export LIBVA_DRIVER_NAME=i965
-vainfo
+vainfo | grep -E "Driver version|VAProfileH264.*Enc"
 ```
-→ Es muss `VAProfileH264...` mit „**Encode**" erscheinen — das ist unser Encoder.
-`VAProfileHEVC` **Encode fehlt** auf Broadwell, und das ist erwartet: die Iris 6100
-kann H.265 nur (teilweise) dekodieren, nicht encoden. Wir encoden daher in H.264.
+→ Es muss `VAProfileH264...` mit `VAEntrypointEncSlice` erscheinen — das ist unser
+Encoder. `VAProfileHEVC`-Encode fehlt auf Broadwell, und das ist erwartet: die
+Iris 6100 kann H.265 nur (teilweise) dekodieren, nicht encoden. Wir encoden daher
+in H.264.
+
+Verifiziert (16.06.2026, am Gerät `eafc-capture`): `vainfo` meldet H264 Enc, und
+ein echter `h264_vaapi`-Encode (1080p30, 2 s) erzeugt eine gültige H.264-Datei —
+Hardware-Encode steht.
 
 Wozu das gut ist: Der Agent encodet die Aufnahme sonst per Software-`libx264` auf
 nur 2 Kernen — knapp bei 1080p30 und erst recht, wenn später ein Live-Stream
