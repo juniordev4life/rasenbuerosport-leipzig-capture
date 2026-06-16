@@ -5,9 +5,15 @@ Highlights hochlädt. Diese Anleitung bringt den Rechner in den Grundzustand —
 Rest (Aufnahme-Agent + Verarbeitung) wird danach per SSH aus der Ferne eingerichtet.
 
 ## Hardware
-- Mini-PC (i7), 8 oder 16 GB RAM, 256 GB SSD. (16 GB bevorzugt, falls wählbar.)
+- Intel NUC5i7RYH — Core i7-5557U (**Broadwell / Gen8**, 2 Kerne / 4 Threads,
+  Iris Graphics 6100). Älteres Gerät (2015), reicht für die Capture-Box —
+  bestimmt aber unten die Treiberwahl (Gen8 = `i965`, nicht der neue iHD-Treiber).
+- Kit: RAM + SSD selbst bestücken. 16 GB DDR3L empfohlen. Zwei Laufwerks-Bays
+  (M.2 + 2,5"): am besten eine größere 2,5"-SSD (z.B. 1 TB), dann füllen die
+  Roh-`.mov`-Aufnahmen die Platte nicht.
 - LAN-Kabel (Ethernet) — WLAN nicht nötig.
-- USB-Capture-Box (kommt später dazu, an einen USB-3.0-Port = meist blau).
+- USB-Capture-Box (kommt später dazu, an einen USB-3.0-Port = meist blau;
+  der NUC hat 2 vorne + 2 hinten).
 
 ## 1. Betriebssystem installieren
 - **Ubuntu Server 24.04 LTS** (Desktop geht auch, falls eine Oberfläche gewünscht
@@ -38,22 +44,42 @@ Gerät, das dauerhaft läuft.)
 ## 3. Benötigte Pakete installieren
 ```bash
 sudo apt -y install ffmpeg python3-venv python3-pip git \
-  v4l-utils vainfo intel-media-va-driver-non-free \
+  v4l-utils vainfo i965-va-driver \
   tesseract-ocr tesseract-ocr-deu avahi-daemon
 ```
 (`avahi-daemon` = damit der Rechner im LAN als `<hostname>.local` erreichbar ist,
 unabhängig von der wechselnden IP.)
-(QuickSync/Hardware-Encode = `intel-media-va-driver`; Texterkennung = `tesseract`;
+(Hardware-Encode-Treiber: dieser NUC ist **Broadwell / Gen8 → `i965-va-driver`**,
+NICHT das neuere `intel-media-va-driver` (iHD) — das unterstützt erst Gen9 /
+Skylake aufwärts und greift auf der Iris 6100 nicht. `tesseract` = Texterkennung;
 `v4l-utils`/`vainfo` nur zum Prüfen.)
 
-## 4. Hardware-Encode (QuickSync) prüfen
+## 4. Hardware-Encode (VA-API) prüfen
+Auf diesem Broadwell-NUC läuft der Hardware-Encode über VA-API mit dem
+`i965`-Treiber. Treiber erzwingen und prüfen:
 ```bash
+export LIBVA_DRIVER_NAME=i965
 vainfo
 ```
-→ Es sollten Zeilen wie `VAProfileH264...` und idealerweise `VAProfileHEVC...` mit
-„**Encode**" erscheinen. Dann steht der Hardware-Encoder.
-(Falls HEVC-Encode fehlt — ältere CPU-Generation — ist das kein Problem, wir nutzen
-dann H.264.)
+→ Es muss `VAProfileH264...` mit „**Encode**" erscheinen — das ist unser Encoder.
+`VAProfileHEVC` **Encode fehlt** auf Broadwell, und das ist erwartet: die Iris 6100
+kann H.265 nur (teilweise) dekodieren, nicht encoden. Wir encoden daher in H.264.
+
+Wozu das gut ist: Der Agent encodet die Aufnahme sonst per Software-`libx264` auf
+nur 2 Kernen — knapp bei 1080p30 und erst recht, wenn später ein Live-Stream
+parallel läuft. Mit VA-API macht das die GPU. Der Agent bekommt den Encoder
+später (beim SSH-Setup) per Env mit, als Startpunkt:
+```bash
+ENCODE_ARGS='-vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v h264_vaapi -b:v 6M'
+```
+(Die genaue Flag-Reihenfolge feilen wir beim Verdrahten am Gerät aus —
+`vainfo` muss vorher H.264-Encode zeigen.)
+
+Hinweis zum Highlight-Reel: `make_highlights`/`cut_highlights` encoden die Clips
+aktuell mit `libx265` (Software-HEVC). Auf diesem 2-Kern-Broadwell ist das langsam
+(kein HW-HEVC). Es ist ein Hintergrund-Job nach dem Spiel — funktioniert, der Reel
+braucht nur ein paar Minuten länger. Wer das beschleunigen will, stellt die
+Clip-/Reel-Encodes ebenfalls auf H.264 (VA-API) um.
 
 ## 5. Capture-Box prüfen (nur falls schon vorhanden)
 USB-Capture-Box anstecken, dann:
