@@ -82,17 +82,35 @@ EA Sports FC match (1920x1080, German UI). Layout:
   the same goal appears on several screenshots. Deduplicate — output every
   goal exactly ONCE.
 
-Return every goal of the match, chronologically, with:
-- team: "home" (left column) or "away" (right column)
-- minute: the number before the apostrophe, as integer
-- scorer: the in-game player name as printed (e.g. "H. Kane")
+Return TWO things:
 
-The final goal count per team must match the header score. If a goal seems
-missing from the screenshots, still return only what is visible."""
+1. final_score: an object {home, away} read from the HEADER "H : A" at the
+   very top (home = the LEFT/home team's number, away = the RIGHT/away
+   team's number). The header is ALWAYS fully visible and does NOT scroll,
+   so read it directly — it is the authoritative final result even when the
+   list below is mid-scroll or a goal is not visible in any screenshot.
+
+2. goals: every goal of the match, chronologically, each with:
+   - team: "home" (left column) or "away" (right column)
+   - minute: the number before the apostrophe, as integer
+   - scorer: the in-game player name as printed (e.g. "H. Kane")
+
+If a goal seems missing from the scrolled list, still return only the goals
+that ARE visible — but always return the true final_score from the header
+(it may legitimately exceed the number of goals you can see in the list)."""
 
 EVENTS_SCHEMA = {
     "type": "object",
     "properties": {
+        "final_score": {
+            "type": "object",
+            "properties": {
+                "home": {"type": "integer"},
+                "away": {"type": "integer"},
+            },
+            "required": ["home", "away"],
+            "additionalProperties": False,
+        },
         "goals": {
             "type": "array",
             "items": {
@@ -107,7 +125,7 @@ EVENTS_SCHEMA = {
             },
         },
     },
-    "required": ["goals"],
+    "required": ["final_score", "goals"],
     "additionalProperties": False,
 }
 
@@ -164,7 +182,10 @@ def dedupe_events(paths):
 
 
 def ask_claude(paths):
-    """Schickt die Events-Frames an Claude Vision, gibt die Torliste zurück."""
+    """Schickt die Events-Frames an Claude Vision, gibt das geparste Ergebnis
+    zurueck: {final_score: {home, away}, goals: [{team, minute, scorer}]}.
+    final_score kommt aus der (immer sichtbaren) Kopfzeile und ist
+    massgeblich — die goals-Liste kann durchs Scrollen ein Tor verpassen."""
     import anthropic  # lazy: Modul bleibt ohne Paket/Key importierbar
 
     content = []
@@ -194,7 +215,7 @@ def ask_claude(paths):
         messages=[{"role": "user", "content": content}],
     )
     text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)["goals"]
+    return json.loads(text)
 
 
 def main():
@@ -228,8 +249,9 @@ def main():
     if not stats_files:
         print("[postmatch] Keine Stats-Tabs (Übersicht/Pässe/Abwehr) im Abspann gefunden.")
 
-    # 2) Events-Torliste
+    # 2) Events-Torliste + massgeblicher Endstand (Kopfzeile)
     goals = []
+    final_score = None
     event_paths = [p for p, _ in by_tab["events"]]
     if SKIP_EVENTS:
         print("[postmatch] SKIP_EVENTS=1 — Torliste übersprungen.")
@@ -246,13 +268,16 @@ def main():
             distinct = [distinct[int(i * step)] for i in range(MAX_EVENT_FRAMES)]
         print(f"[postmatch] Events: {len(event_paths)} Frames, {len(distinct)} distinkt -> Claude ({EVENTS_MODEL})")
         try:
-            goals = ask_claude(distinct)
-            print(f"[postmatch] {len(goals)} Tore extrahiert.")
+            result = ask_claude(distinct)
+            goals = result.get("goals", [])
+            final_score = result.get("final_score")
+            fs = f"{final_score['home']}:{final_score['away']}" if final_score else "?"
+            print(f"[postmatch] {len(goals)} Tore extrahiert, Endstand laut Kopfzeile {fs}.")
         except Exception as e:
             print(f"[postmatch] Vision-Extraktion fehlgeschlagen: {e}")
 
     with open(EVENTS_OUT, "w") as f:
-        json.dump({"goals": goals, "stats_files": stats_files}, f, indent=2)
+        json.dump({"goals": goals, "final_score": final_score, "stats_files": stats_files}, f, indent=2)
     print(f"[postmatch] Ergebnis -> {EVENTS_OUT}")
 
 
