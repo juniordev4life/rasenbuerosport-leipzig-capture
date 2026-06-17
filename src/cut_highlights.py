@@ -47,7 +47,24 @@ VIDEO_EXTRA = ["-tag:v", "hvc1"]   # HEVC-Tag fuer QuickTime/Apple-Kompatibilita
 # schlichtes cv2-Banner. Eigene Grafik einfach als overlay_template.png ablegen
 # (transparenter Hintergrund) und die Positionen unten anpassen.
 TEMPLATE = os.path.join(ASSETS, "overlay_template.png")
-FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+def _resolve_font():
+    """Erste existierende fette TrueType-Schrift — plattformuebergreifend.
+    Dev-Mac: Arial Bold; Linux/NUC: Liberation (Arial-Metrik) bzw. DejaVu.
+    Per Env FONT_PATH ueberschreibbar (z.B. eine gebuendelte Schrift). None,
+    wenn keine gefunden wird — dann ueberspringt der Aufrufer die Einblendung
+    (Clip ohne Overlay statt Absturz)."""
+    for path in (
+        os.environ.get("FONT_PATH"),
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",             # macOS (Dev)
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",  # Linux, Arial-Metrik
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",          # Linux-Standard
+    ):
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+FONT_PATH = _resolve_font()
 # Torschütze (gross, links) + Vorlage (kleiner, RECHTS daneben). Die Vorlage wird
 # DYNAMISCH hinter den Namen gesetzt (x = Name-Ende + Abstand) — so passt auch der
 # längste Name samt Vorlage in den Kasten (gemessen: bleibt < x1000, Kasten ~x1015).
@@ -176,8 +193,10 @@ for idx, g in enumerate(goals, 1):
         try:
             render_label_overlay(g["label"], overlay)
             cut(start, dur, out, overlay, full_frame=True)
-        except subprocess.CalledProcessError:
-            print("  Overlay fehlgeschlagen, schneide ohne Einblendung ...")
+        except Exception as e:
+            # Auch Font-/Render-Fehler (nicht nur ffmpeg) duerfen den Clip nicht
+            # killen — lieber ohne Einblendung schneiden als das Reel verlieren.
+            print(f"  Overlay fehlgeschlagen ({e}), schneide ohne Einblendung ...")
             cut(start, dur, out)
         finally:
             if os.path.exists(overlay):
@@ -208,8 +227,10 @@ for idx, g in enumerate(goals, 1):
             caption = f"{minute}'  {g['score']}" if minute is not None else g["score"]
             make_banner(caption, overlay)
             cut(start, dur, out, overlay, full_frame=False)
-    except subprocess.CalledProcessError:
-        print("  Overlay fehlgeschlagen, schneide ohne Einblendung ...")
+    except Exception as e:
+        # Auch Font-/Render-Fehler (nicht nur ffmpeg) duerfen den Clip nicht
+        # killen — lieber ohne Einblendung schneiden als das Reel verlieren.
+        print(f"  Overlay fehlgeschlagen ({e}), schneide ohne Einblendung ...")
         cut(start, dur, out)
     finally:
         if os.path.exists(overlay):
