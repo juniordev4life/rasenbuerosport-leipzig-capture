@@ -34,6 +34,8 @@ import subprocess
 import sys
 import urllib.request
 
+from detect_skin import detect_skin_from_dir
+from make_highlights import FPS, extract_frames
 from paths import script
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:3001/api/v1")
@@ -233,6 +235,66 @@ def submit_stats(stats_files):
         print(f"[pipeline] Match-Stats angewendet: {result.get('applied')}")
 
 
+def finalize_if_pending(timeline, data, post):
+    """Pending-Spiel mit der Timeline finalisieren, auf den Kopfzeilen-Endstand
+    abgeglichen (Weg B). Die Highlights nutzen die unaufgefuellte `timeline`; nur
+    die Finalize-Kopie wird ggf. aufgefuellt. No-op, wenn nicht pending.
+
+    @param {object[]} timeline - erkannte Tore (App-Format), unaufgefuellt
+    @param {object|null} data - /recording/timeline-Antwort (pending, players, ...)
+    @param {object|null} post - Nachspiel-Extraktion (liefert final_score)
+    @returns {void}
+    @example
+    finalize_if_pending(hud_timeline, data, post)  # finalisiert 3:0, auch wenn nur 2 erkannt
+    """
+    if not (data and data.get("pending")):
+        if data:
+            print("[pipeline] Spiel ist nicht pending — Timeline nur fuer Highlights, kein Finalize.")
+        return
+    players = (data or {}).get("players")
+    final_score = post.get("final_score") if post else None
+    finalize_timeline = reconcile_to_final_score(timeline, final_score, players)
+    if len(finalize_timeline) != len(timeline) and final_score:
+        print(f"[pipeline] Endstand laut Kopfzeile {final_score['home']}:{final_score['away']} > "
+              f"{len(timeline)} erkannte Tore — Finalize-Timeline auf {len(finalize_timeline)} "
+              f"aufgefuellt (Score autoritativ, Highlights best-effort).")
+    finalized = api_post("/recording/finalize", {"game_id": GAME_ID, "score_timeline": finalize_timeline})
+    if finalized:
+        print(f"[pipeline] Spiel finalisiert: {finalized.get('score_home')}:{finalized.get('score_away')}")
+
+
+def detect_hud_goals(base, app_path, players):
+    """1v1 HUD-native Tor-Erkennung (Option B): Frames ziehen, Skin erkennen,
+    build_hud_timeline -> App-Timeline nach app_path. Scroll-unabhaengig — jedes
+    Tor wird ueber die Live-Anstosstafeln erfasst, nicht ueber die Events-Seite.
+    Gibt (timeline, skin) zurueck oder ([], None) bei Fehlschlag (dann greift der
+    Events-/Klassik-Fallback). Der Skin wird an make_highlights durchgereicht.
+
+    @param {string} base - Datei-Basisname (z.B. game_<recId>)
+    @param {string} app_path - Ziel der App-Timeline (app_<base>.json)
+    @param {object[]} players - Aufstellung (1v1: je ein Spieler pro Seite)
+    @returns {[object[], string|null]} (Timeline, erkannter Skin)
+    @example
+    timeline, skin = detect_hud_goals("game_abc", "app_game_abc.json", players)
+    """
+    frames_dir = f"frames_{base}"
+    try:
+        extract_frames(VIDEO, frames_dir)
+        skin, info = detect_skin_from_dir(frames_dir)
+        skin = skin or "bundesliga"
+        print(f"[pipeline] 1v1 HUD-Modus — Skin {skin} "
+              f"(Konfidenz {info.get('confidence') if info else '?'})")
+        env = {**os.environ, "FRAMES_DIR": frames_dir, "FPS": str(FPS),
+               "HUD_PROFILE": skin, "PLAYERS": json.dumps(players or []), "OUT": app_path}
+        rc = subprocess.run([sys.executable, script("build_hud_timeline.py")], env=env)
+        if rc.returncode == 0 and os.path.exists(app_path):
+            return json.load(open(app_path)), skin
+        print(f"[pipeline] build_hud_timeline rc={rc.returncode} — Fallback.")
+    except Exception as e:
+        print(f"[pipeline] HUD-Erkennung fehlgeschlagen ({e}) — Fallback.")
+    return [], None
+
+
 def main():
     if not GAME_ID or not VIDEO:
         print("[pipeline] PIPE_GAME_ID / PIPE_VIDEO fehlen — Abbruch.")
@@ -266,44 +328,56 @@ def main():
     if post:
         submit_stats(post.get("stats_files"))
 
-    # Torliste fuer den Anker-Modus: Taps gewinnen; sonst die Vision-Tore.
+    # Spieler + 1v1-Erkennung (steuert die Torquelle).
+    players = (data or {}).get("players") or []
+    is_1v1 = (sum(1 for p in players if p.get("team") == "home") == 1
+              and sum(1 for p in players if p.get("team") == "away") == 1)
+
+    # Torquelle nach Prioritaet: Taps (autoritativ) > 1v1 HUD-nativ (Option B,
+    # scroll-unabhaengig, jedes Tor ueber die Live-Anstosstafeln) > Events-Screen-
+    # Vision (2v2-Fallback) > klassische Ziffern-Erkennung. hud_profile wird
+    # gesetzt, wenn der HUD-Modus lief -> make_highlights bekommt die schon
+    # gezogenen Frames (REUSE_FRAMES) und den Skin (--hud) durchgereicht.
     app_path = f"app_{base}.json"
+    hud_profile = None
     if tap_goals:
-        enriched = enrich_tap_timeline(data["score_timeline"], data.get("players"))
+        enriched = enrich_tap_timeline(data["score_timeline"], players)
         with open(app_path, "w") as f:
             json.dump(enriched, f)
         print(f"[pipeline] App-Timeline (Taps): {len(tap_goals)} Tore -> {app_path}")
+    elif is_1v1:
+        timeline, hud_profile = detect_hud_goals(base, app_path, players)
+        if timeline:
+            print(f"[pipeline] HUD-native Timeline (1v1, Option B): {len(timeline)} Tore -> {app_path}")
+            finalize_if_pending(timeline, data, post)
+        elif post and post.get("goals"):
+            timeline = build_app_timeline(post["goals"], players)
+            with open(app_path, "w") as f:
+                json.dump(timeline, f)
+            print(f"[pipeline] HUD-Erkennung leer — Fallback Events-Screen: {len(timeline)} Tore -> {app_path}")
+            finalize_if_pending(timeline, data, post)
+        else:
+            print("[pipeline] Weder HUD noch Events-Screen lieferten Tore — klassische Erkennung.")
     elif post and post.get("goals"):
-        timeline = build_app_timeline(post["goals"], (data or {}).get("players"))
+        timeline = build_app_timeline(post["goals"], players)
         with open(app_path, "w") as f:
             json.dump(timeline, f)   # unaufgefuellt -> Highlights/Anker-Modus
-        print(f"[pipeline] Vision-Timeline (Events-Screen): {len(timeline)} Tore -> {app_path}")
-        if data and data.get("pending"):
-            # Score autoritativ aus der Kopfzeile: die Events-Liste kann durchs
-            # Scrollen ein Tor verpassen — fuers Finalize auf den Endstand
-            # auffuellen (Highlights bleiben best-effort bei den erkannten Toren).
-            finalize_timeline = reconcile_to_final_score(
-                timeline, post.get("final_score"), (data or {}).get("players"))
-            if len(finalize_timeline) != len(timeline):
-                fs = post["final_score"]
-                print(f"[pipeline] Endstand laut Kopfzeile {fs['home']}:{fs['away']} > "
-                      f"{len(timeline)} erkannte Tore — Finalize-Timeline auf "
-                      f"{len(finalize_timeline)} aufgefuellt (Score autoritativ).")
-            finalized = api_post("/recording/finalize",
-                                 {"game_id": GAME_ID, "score_timeline": finalize_timeline})
-            if finalized:
-                print(f"[pipeline] Spiel finalisiert: "
-                      f"{finalized.get('score_home')}:{finalized.get('score_away')}")
-        elif data:
-            print("[pipeline] Spiel ist nicht pending — Timeline nur fuer die "
-                  "Highlights genutzt, kein Finalize.")
+        print(f"[pipeline] Vision-Timeline (Events-Screen, 2v2): {len(timeline)} Tore -> {app_path}")
+        finalize_if_pending(timeline, data, post)
     else:
-        print("[pipeline] Keine Torliste (weder Taps noch Events-Screen) — "
+        print("[pipeline] Keine Torliste (weder Taps, HUD noch Events-Screen) — "
               "klassische Ziffern-Erkennung.")
 
-    # 2) Reel erzeugen.
+    # 2) Reel erzeugen. Lief der 1v1-HUD-Modus, reichen wir die schon gezogenen
+    #    Frames (REUSE_FRAMES) und den erkannten Skin (--hud) durch — sonst
+    #    extrahiert/erkennt make_highlights wie gehabt selbst.
     print(f"[pipeline] make_highlights für {VIDEO} ...")
-    result = subprocess.run([sys.executable, script("make_highlights.py"), VIDEO])
+    hl_cmd = [sys.executable, script("make_highlights.py"), VIDEO]
+    hl_env = {**os.environ}
+    if hud_profile:
+        hl_cmd += ["--hud", hud_profile]
+        hl_env["REUSE_FRAMES"] = "1"
+    result = subprocess.run(hl_cmd, env=hl_env)
     if result.returncode != 0 or not os.path.exists(reel):
         # Häufigster gutartiger Fall: keine Tore erkannt -> kein Reel.
         print(f"[pipeline] Kein Reel erzeugt (rc={result.returncode}, reel da: {os.path.exists(reel)}).")
