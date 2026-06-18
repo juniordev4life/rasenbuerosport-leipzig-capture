@@ -51,7 +51,16 @@ def detect_profile(frames_dir, override):
 
 
 def extract_frames(video, frames_dir):
-    """Zerlegt das Video mit FPS in Einzelframes. Leert frames_dir vorher."""
+    """Zerlegt das Video mit FPS in Einzelframes. Leert frames_dir vorher.
+
+    REUSE_FRAMES=1 ueberspringt das Extrahieren, wenn frames_dir bereits Frames
+    enthaelt: im 1v1-HUD-Modus zieht process_highlights die Frames schon vorab
+    fuer die Tor-Erkennung — make_highlights nutzt sie dann mit, statt sie ein
+    zweites Mal (Minuten!) zu extrahieren.
+    """
+    if os.environ.get("REUSE_FRAMES") == "1" and glob.glob(os.path.join(frames_dir, "*.png")):
+        print(f"      REUSE_FRAMES: nutze vorhandene Frames in {frames_dir} (kein Neu-Extrahieren).")
+        return
     os.makedirs(frames_dir, exist_ok=True)
     for old in glob.glob(os.path.join(frames_dir, "*.png")):
         os.remove(old)
