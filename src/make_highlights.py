@@ -40,15 +40,16 @@ def detect_profile(frames_dir, override):
     """Waehlt das HUD-Profil: explizit (--hud) oder AUTOMATISCH aus dem Bild.
 
     Keine manuelle Wettbewerbs-Auswahl noetig — `detect_skin` bestimmt den Skin
-    per HUD-Abgleich ueber Stichproben-Frames (siehe detect_skin.py). Fallback
-    auf bundesliga mit Warnung, falls kein Skin sicher erkannt wird.
+    per HUD-Abgleich ueber Stichproben-Frames (siehe detect_skin.py). Gibt None
+    zurueck, wenn kein Skin sicher erkannt wird — der Aufrufer bricht dann sauber
+    ab, statt mit einem falschen Profil Muell zu erzeugen.
     """
     if override:
         return override, "explizit (--hud)"
     skin, info = detect_skin_from_dir(frames_dir)
     if skin:
         return skin, f"automatisch erkannt, Konfidenz {info['confidence']} ({info['voting_frames']} Frames)"
-    return "bundesliga", "FALLBACK (Skin nicht erkannt — ggf. --hud angeben)"
+    return None, "Skin nicht sicher erkannt (unbekannter/unkalibrierter Skin)"
 
 
 def extract_frames(video, frames_dir):
@@ -186,6 +187,13 @@ def main():
     # Skin aus dem Bild bestimmen (kein Dateiname, keine manuelle Auswahl)
     profile, how = detect_profile(frames_dir, override)
     print(f"      HUD-Profil: {profile}  [{how}]")
+    if profile is None:
+        # Unbekannter Skin: NICHT auf ein falsches Profil zurueckfallen — das
+        # erzeugt 0 Tore + ein Fehl-Elfmeterschiessen ueber das ganze Spiel
+        # (Riesen-Clip, langer Encode). Lieber sauber abbrechen: kein Reel,
+        # process_highlights meldet video_status=failed (manuell erfassbar).
+        print("Kein bekannter Skin erkannt — kein Reel (Spiel ggf. manuell erfassen).")
+        sys.exit(2)
     if profile not in HUD_PROFILES:
         print(f"HUD-Profil '{profile}' ist noch nicht kalibriert. Bekannt: {list(HUD_PROFILES)}")
         sys.exit(1)

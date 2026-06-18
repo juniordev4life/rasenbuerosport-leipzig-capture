@@ -137,7 +137,10 @@ def read_minute(img, side):
         return None
     mode = mn.get("mode", "digit")
     whitelist = None if mode == "line" else "0123456789"
-    nums = re.findall(r"\d+", _read(_region_thresh(img, region), region[5], whitelist))
+    try:
+        nums = re.findall(r"\d+", _read(_region_thresh(img, region), region[5], whitelist))
+    except Exception:  # OCR/Tesseract-Fehler oder Region ausserhalb -> None, nicht crashen
+        return None
     if not nums:
         return None
     value = int(nums[-1] if mode == "line" else nums[0])
@@ -307,7 +310,15 @@ if SHOOTOUT and timeline:
                 j += 1  # bis ans Ende des Sieger-Jubels (gruene Wiese) verlaengern
             start_sec = timeline[labels[0]]["videoSecond"]
             end_sec = timeline[j]["videoSecond"]
-    if start_sec is not None and end_sec - start_sec >= SHOOTOUT["min_length"]:
+    # Plausibilitaet: ein echtes Elfmeterschiessen ist kurz. Ein "Schiessen"
+    # ueber fast das ganze Spiel ist eine Fehlerkennung (z.B. HUD durchgehend
+    # weg bei falschem Profil) -> verwerfen statt einen Riesen-Clip (langer
+    # Encode) zu bauen. max_length per Profil ueberschreibbar (Default 300s).
+    shootout_max = SHOOTOUT.get("max_length", 300)
+    block_len = (end_sec - start_sec) if start_sec is not None else 0
+    if start_sec is not None and block_len > shootout_max:
+        print(f"Elfmeterschiessen verworfen: Block {block_len}s > {shootout_max}s (Fehlerkennung).")
+    elif start_sec is not None and block_len >= SHOOTOUT["min_length"]:
         goals.append({
             "type": "shootout",
             "clipStart": start_sec,

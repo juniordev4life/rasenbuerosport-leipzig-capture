@@ -88,7 +88,7 @@ HUD_PROFILES = {
         # HUD-Praesenz (Score-Bug oben links) -> erkennt Wiederholungen: waehrend
         # Jubel/Replay ist das HUD weg. Fuer den adaptiven Clip-Start.
         "hud": {
-            "region": (80, 56, 390, 56),
+            "region": (268, 78, 42, 40),
             "ref": os.path.join(TEMPLATES, "premier", "hud_ref.png"),
             "threshold": 0.45,
         },
