@@ -85,6 +85,11 @@ if not APP_TIMELINE or not os.path.exists(APP_TIMELINE):
 
 PROFILE = HUD_PROFILES[PROFILE_NAME]
 CALIB = BOARD_CALIB[PROFILE_NAME]
+# Live-HUD-Referenz (Score-Bug/Uhr oben links) fuer die Tor-Moment-Erkennung.
+# Optional: Profile ohne "hud" liefern goalMoment=None, der Schnitt faellt dann
+# auf den festen Tafel-Vorlauf zurueck.
+HUD = PROFILE.get("hud")
+_hud_ref = cv2.imread(HUD["ref"], 0) if HUD else None
 
 TPL_SIZE = (50, 70)
 
@@ -130,6 +135,31 @@ def board_presence(img, anchor):
     sx, sy, sw, sh = CALIB["search_region"]
     win = cv2.cvtColor(img[sy:sy + sh, sx:sx + sw], cv2.COLOR_BGR2GRAY)
     return float(cv2.matchTemplate(win, anchor, cv2.TM_CCOEFF_NORMED).max())
+
+
+def hud_present(img):
+    """True, wenn das Live-HUD (Score-Bug/Uhr oben links) sichtbar ist — also
+    Live-Spiel oder Jubel, NICHT Wiederholung/Menue. None ohne hud-Profil."""
+    if HUD is None or _hud_ref is None or img is None:
+        return None
+    x, y, w, h = HUD["region"]
+    crop = cv2.cvtColor(img[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY)
+    return float(cv2.matchTemplate(crop, _hud_ref, cv2.TM_CCOEFF_NORMED).max()) >= HUD["threshold"]
+
+
+def goal_moment_idx(board_start, hud_flags):
+    """Frame-Index des Tor-Moments: letzter Frame mit Live-HUD (2 Frames stabil)
+    VOR der HUD-Luecke (Jubel/Wiederholung), die zur Tafel fuehrt — Rezept wie
+    build_score_timeline.goal_moment_second. So findet der Schnitt die Live-Szene
+    zurueck, egal wie lang Jubel/Wiederholung sind. None ohne HUD-Info."""
+    if HUD is None:
+        return None
+    k = board_start - 1
+    while k >= 1:
+        if hud_flags[k] and hud_flags[k - 1]:
+            return k
+        k -= 1
+    return None
 
 
 # --- Minute von der Tafel lesen — Rezept wie read_minute/build_score_timeline:
@@ -189,7 +219,9 @@ def read_board_minute(img):
 # --- Torliste laden ---------------------------------------------------------
 raw = json.load(open(APP_TIMELINE))
 goal_list = [e for e in raw if e.get("event_type", "goal") == "goal"]
-goal_list.sort(key=lambda e: e.get("minute") or 0)
+# Chronologisch nach laufendem Stand (home+away steigt pro Tor um 1) — robust
+# gegen fehlende/None-Minuten (HUD-Timeline). Die Minute ist nur Validierung.
+goal_list.sort(key=lambda e: e.get("home", 0) + e.get("away", 0))
 print(f"Torliste: {len(goal_list)} Tore aus {APP_TIMELINE}")
 
 # --- Frames + Selbstkalibrierung --------------------------------------------
@@ -220,9 +252,11 @@ print(f"Anker selbstkalibriert aus {frames[kickoff_idx]} (0:0-Anstoßtafel, "
 
 # --- Tafel-Praesenz ueber alle Frames ----------------------------------------
 presence = []
+hud_flags = []
 for fname in frames:
     img = cv2.imread(os.path.join(FRAMES_DIR, fname))
     presence.append(board_presence(img, anchor) if img is not None else 0.0)
+    hud_flags.append(bool(hud_present(img)))
 
 boards = []
 i = 0
@@ -296,7 +330,8 @@ work = list(goal_boards)
 while len(work) > len(goal_list):
     no_match = [b for b in work
                 if b["headerMinute"] is None
-                or not any(abs(b["headerMinute"] - g["minute"]) <= MINUTE_TOLERANCE
+                or not any(g["minute"] is not None
+                           and abs(b["headerMinute"] - g["minute"]) <= MINUTE_TOLERANCE
                            for g in goal_list)]
     drop = no_match[0] if no_match else work[-1]
     drop["reason"] = drop.get("reason") or "Ueberschuss (keine Minuten-Naehe zu einem Tor)"
@@ -309,13 +344,17 @@ for g, b in zip(goal_list, work):
 # --- goals.json schreiben -----------------------------------------------------
 goals = []
 for g, b in assignments:
+    gm_idx = goal_moment_idx(b["startIdx"], hud_flags)
     goals.append({
         "videoSecond": b["videoSecond"],
         "frame": b["frame"],
         "score": f"{g['home']}:{g['away']}",
         "scoredBy": g["team"],
         "minute": g["minute"],
-        "goalMoment": None,
+        # Tor-Moment (letzter Live-HUD-Frame vor der Tafel-Luecke) statt fester
+        # Tafel-Vorlauf -> cut_highlights ankert den Clip am Tor: Live-Aufbau +
+        # Tor in Echtzeit + Jubel + Wiederholung. None -> fester Vorlauf (Fallback).
+        "goalMoment": round(gm_idx / FPS) if gm_idx is not None else None,
         # Anzeigenamen bevorzugen: scored_by/assist_by tragen in Tap-Timelines
         # SPIELER-IDs (Firebase-UIDs), die *_name-Felder die lesbaren Namen.
         "scorer": g.get("scored_by_name") or g.get("scored_by"),
@@ -331,11 +370,13 @@ if BOARDS_OUT:
 print(f"\n{'Stand':>6} {'Tap-Min':>7} {'Seite':>5} | {'Tafel-Sek':>9} {'Tafel-Min':>9}"
       f"  {'Abw.':>5}  Frame")
 for g, b in assignments:
-    dev = "" if b["headerMinute"] is None else f"{b['headerMinute'] - g['minute']:+d}"
-    warn = ""
-    if b["headerMinute"] is not None and abs(b["headerMinute"] - g["minute"]) > MINUTE_TOLERANCE:
-        warn = "  <-- Abweichung > Toleranz, Zuordnung pruefen!"
-    print(f"{g['home']}:{g['away']:>2} {g['minute']:>7} {g['team']:>5} | "
+    minute = g.get("minute")
+    dev, warn = "", ""
+    if b["headerMinute"] is not None and minute is not None:
+        dev = f"{b['headerMinute'] - minute:+d}"
+        if abs(b["headerMinute"] - minute) > MINUTE_TOLERANCE:
+            warn = "  <-- Abweichung > Toleranz, Zuordnung pruefen!"
+    print(f"{g['home']}:{g['away']:>2} {str(minute):>7} {g['team']:>5} | "
           f"{b['videoSecond']:>9} {str(b['headerMinute']):>9}  {dev:>5}  {b['frame']}{warn}")
 
 if len(assignments) < len(goal_list):
