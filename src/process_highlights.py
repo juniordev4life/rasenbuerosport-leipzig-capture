@@ -391,9 +391,10 @@ def main():
     if not GAME_ID or not VIDEO:
         print("[pipeline] PIPE_GAME_ID / PIPE_VIDEO fehlen — Abbruch.")
         return
+    penalty_fields = {}  # nach run_postmatch ggf. mit dem Elfmeter-Ergebnis befuellt
     if not os.path.exists(VIDEO):
         print(f"[pipeline] Aufnahme nicht gefunden: {VIDEO}")
-        patch_status("failed")
+        patch_status("failed", **penalty_fields)
         return
     # Klassische Fehlkonfiguration abfangen: GCS_BUCKET muss der Firebase-
     # Bucket sein (FIREBASE_STORAGE_BUCKET der API), NICHT der Ordnername —
@@ -414,14 +415,30 @@ def main():
     data = fetch_timeline()
     tap_goals = [e for e in (data.get("score_timeline") if data else []) or []
                  if e.get("event_type", "goal") == "goal"]
-    if data and data.get("result_type") == "penalty":
-        print("[pipeline] HINWEIS: Spiel ging ins Elfmeterschiessen — der "
-              "Schiessen-Clip wird im Anker-Modus noch nicht erzeugt.")
-
-    # 1) Nachspiel-Extraktion: Stats-Screens immer; Events-Torliste nur ohne Taps.
+    # 1) Nachspiel-Extraktion: Stats-Screens immer; Events-Torliste nur ohne Taps;
+    #    zusaetzlich das Elfmeterschiessen-Ergebnis vom Post-Match-Screen.
     post = run_postmatch(base, skip_events=bool(tap_goals))
     if post:
         submit_stats(post.get("stats_files"))
+
+    # Elfmeterschiessen-Ergebnis: FC26 zeigt nach JEDEM Spiel "ELF X-Y" / "(X:YE)"
+    # (extract_postmatch liest es per Vision — robust, skin-/teamunabhaengig).
+    # -> result_type=penalty + ergebnis-only penalty_shootout (kein shots[],
+    # source "auto"), per Status-PATCH gemeldet. Den Clip liefert detect_shootout.
+    pen = (post or {}).get("penalty_shootout")
+    if pen and pen.get("winner") in ("home", "away"):
+        reg = (post or {}).get("final_score") or {}
+        penalty_fields = {
+            "result_type": "penalty",
+            "penalty_shootout": {
+                "score_before": {"home": reg.get("home", 0), "away": reg.get("away", 0)},
+                "final_score": {"home": pen["home"], "away": pen["away"]},
+                "winner_side": pen["winner"],
+                "source": "auto",
+            },
+        }
+        print(f"[pipeline] Elfmeterschiessen {pen['home']}:{pen['away']} "
+              f"(Sieger {pen['winner']}) -> result_type=penalty.")
 
     # Spieler + 1v1-Erkennung (steuert die Torquelle).
     players = (data or {}).get("players") or []
@@ -476,13 +493,13 @@ def main():
     if result.returncode != 0 or not os.path.exists(reel):
         # Häufigster gutartiger Fall: keine Tore erkannt -> kein Reel.
         print(f"[pipeline] Kein Reel erzeugt (rc={result.returncode}, reel da: {os.path.exists(reel)}).")
-        patch_status("failed")
+        patch_status("failed", **penalty_fields)
         return
 
     # 2) Reel öffentlich in den Bucket laden (Pendant zu file.save()+makePublic() der API).
     if not GCS_BUCKET:
         print("[pipeline] GCS_BUCKET nicht gesetzt — Upload übersprungen, Reel bleibt lokal.")
-        patch_status("failed")
+        patch_status("failed", **penalty_fields)
         return
     obj = f"{HIGHLIGHTS_PREFIX}/{GAME_ID}.mp4"
     dest = f"gs://{GCS_BUCKET}/{obj}"
@@ -491,12 +508,12 @@ def main():
         ["gsutil", "-h", "Content-Type:video/mp4", "cp", "-a", "public-read", reel, dest])
     if up.returncode != 0:
         print(f"[pipeline] Upload fehlgeschlagen (rc={up.returncode}).")
-        patch_status("failed")
+        patch_status("failed", **penalty_fields)
         return
 
     # 3) Verknüpfen — die App rendert genau diese URL.
     url = f"https://storage.googleapis.com/{GCS_BUCKET}/{obj}"
-    patch_status("ready", highlight_url=url)
+    patch_status("ready", highlight_url=url, **penalty_fields)
     print(f"[pipeline] Fertig: {url}")
 
     # Erfolgreich hochgeladen -> Scratch + lokales Reel/Clips dieses Spiels weg.

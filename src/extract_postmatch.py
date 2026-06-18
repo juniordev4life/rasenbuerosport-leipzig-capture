@@ -218,6 +218,77 @@ def ask_claude(paths):
     return json.loads(text)
 
 
+PENALTY_PROMPT = """\
+Diese Bilder sind Post-Match-Screens eines EA Sports FC (FC26) Spiels (deutsche UI).
+FC26 zeigt nach JEDEM Spiel den Endstand. Wenn die Partie im ELFMETERSCHIESSEN
+entschieden wurde, ist das markiert — entweder:
+- in der oberen Ergebnis-Leiste als "ELF | X - Y"  (X = Heim/links, Y = Gast/rechts), ODER
+- als Zusatz unter dem Endstand als "(X:YE)"  — das "E" steht fuer Elfmeterschiessen.
+Gib zurueck:
+- shootout: true NUR wenn so ein Marker (ELF bzw. ...E) KLAR lesbar ist, sonst false.
+- home, away: die verwandelten Elfmeter von Heim (X) und Gast (Y), wenn shootout true.
+Erfinde keine Zahlen. Ohne klar lesbaren Marker -> shootout=false, home/away null."""
+
+PENALTY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "shootout": {"type": "boolean"},
+        "home": {"type": ["integer", "null"]},
+        "away": {"type": ["integer", "null"]},
+    },
+    "required": ["shootout"],
+    "additionalProperties": False,
+}
+
+
+def read_penalty_shootout(paths):
+    """Sucht in den Ergebnis-/Menue-Screens am Spielende den Elfmeterschiessen-
+    Marker ("ELF X - Y" bzw. Score-Zusatz "(X:YE)") und liest den Endstand. Per
+    Claude Vision — robust und skin-/teamunabhaengig (anders als das Live-Banner-
+    Lesen, das pro Skin kalibriert werden muss).
+
+    @param {string[]} paths - Frame-Pfade vom Spielende (Ergebnis-/Menue-Screens)
+    @returns {object|null} {home, away, winner} oder None (kein Schiessen erkannt)
+    @example
+    read_penalty_shootout(end_frames)  # -> {"home": 6, "away": 7, "winner": "away"}
+    """
+    if not paths:
+        return None
+    import anthropic  # lazy: ohne Paket/Key importierbar
+
+    content = []
+    for p in paths:
+        img = cv2.imread(p)
+        if img is None:
+            continue
+        scale = 1280 / img.shape[1]
+        small = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if ok:
+            content.append({"type": "image", "source": {
+                "type": "base64", "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(buf.tobytes()).decode()}})
+    if not content:
+        return None
+    content.append({"type": "text", "text": PENALTY_PROMPT})
+    try:
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=EVENTS_MODEL, max_tokens=1000, thinking={"type": "adaptive"},
+            output_config={"format": {"type": "json_schema", "schema": PENALTY_SCHEMA}},
+            messages=[{"role": "user", "content": content}])
+        text = next(b.text for b in response.content if b.type == "text")
+        result = json.loads(text)
+    except Exception as e:
+        print(f"[postmatch] Elfmeter-Lesung fehlgeschlagen: {e}")
+        return None
+    if not result.get("shootout") or result.get("home") is None or result.get("away") is None:
+        return None
+    home, away = int(result["home"]), int(result["away"])
+    return {"home": home, "away": away,
+            "winner": "home" if home > away else ("away" if away > home else "tie")}
+
+
 def main():
     strip_ref = cv2.imread(STRIP_TEMPLATE, 0)
     if strip_ref is None:
@@ -276,8 +347,24 @@ def main():
         except Exception as e:
             print(f"[postmatch] Vision-Extraktion fehlgeschlagen: {e}")
 
+    # 3) Elfmeterschiessen-Ergebnis vom Endstand-/Menue-Screen lesen. FC26 zeigt
+    # den Marker "ELF X-Y" / "(X:YE)" nach JEDEM Spiel — skin-/teamunabhaengig.
+    # Ein paar Frames vom Spielende reichen; Claude Vision findet den Marker dort.
+    penalty_shootout = None
+    if not SKIP_EVENTS and os.environ.get("ANTHROPIC_API_KEY"):
+        end = frames[-int(30 * FPS):]
+        step = max(1, len(end) // 4)
+        result_frames = end[::step][:4]
+        penalty_shootout = read_penalty_shootout(result_frames)
+        if penalty_shootout:
+            print(f"[postmatch] Elfmeterschiessen erkannt: {penalty_shootout['home']}:"
+                  f"{penalty_shootout['away']} (Sieger {penalty_shootout['winner']}).")
+        else:
+            print("[postmatch] kein Elfmeterschiessen-Marker im Abspann.")
+
     with open(EVENTS_OUT, "w") as f:
-        json.dump({"goals": goals, "final_score": final_score, "stats_files": stats_files}, f, indent=2)
+        json.dump({"goals": goals, "final_score": final_score,
+                   "stats_files": stats_files, "penalty_shootout": penalty_shootout}, f, indent=2)
     print(f"[postmatch] Ergebnis -> {EVENTS_OUT}")
 
 
