@@ -28,10 +28,13 @@ komplett aus dem Environment (der Agent vererbt es):
 Der Reel wird unter <prefix>/<gameId>.mp4 abgelegt; die App rendert die
 zurückgemeldete highlight_url direkt in einem <video>-Tag.
 """
+import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 from detect_skin import detect_skin_from_dir
@@ -44,6 +47,13 @@ GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
 HIGHLIGHTS_PREFIX = os.environ.get("HIGHLIGHTS_PREFIX", "highlights")
 GAME_ID = os.environ.get("PIPE_GAME_ID")
 VIDEO = os.environ.get("PIPE_VIDEO")
+# Aufraeumen nach dem Lauf. CLEANUP=0 schaltet alles ab. RECORDING_RETENTION_DAYS
+# >0 loescht Aufnahmen aelter als X Tage (OPT-IN, 0 = behalten — die Aufnahme ist
+# die Re-Processing-Versicherung). ORPHAN_SCRATCH_HOURS schuetzt frische bzw.
+# parallel laufende Scratch-Reste vor dem Verwaist-Sweep.
+CLEANUP = os.environ.get("CLEANUP", "1") != "0"
+RECORDING_RETENTION_DAYS = int(os.environ.get("RECORDING_RETENTION_DAYS", "0"))
+ORPHAN_SCRATCH_HOURS = int(os.environ.get("ORPHAN_SCRATCH_HOURS", "24"))
 
 
 def patch_status(status, **extra):
@@ -295,6 +305,88 @@ def detect_hud_goals(base, app_path, players):
     return [], None
 
 
+def _rm(path):
+    """Datei ODER Verzeichnis entfernen (idempotent). True bei tatsaechlichem Loeschen."""
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        elif os.path.exists(path):
+            os.remove(path)
+        else:
+            return False
+        return True
+    except OSError as e:
+        print(f"[cleanup] {path} nicht entfernbar: {e}")
+        return False
+
+
+def cleanup_run_artifacts(base):
+    """Nach ERFOLGREICHEM Lauf: Scratch (Frames/Stats/Zwischen-JSONs) + lokales
+    Reel + Clips dieses Spiels loeschen — alles regenerierbar bzw. schon im
+    Bucket. Die Aufnahme (.mov) bleibt; ihre Retention laeuft separat. CLEANUP=0
+    schaltet ab.
+
+    @param {string} base - Datei-Basisname (z.B. game_<recId>)
+    @returns {void}
+    @example
+    cleanup_run_artifacts("game_abc")  # entfernt frames_game_abc/, das Reel etc.
+    """
+    if not CLEANUP:
+        return
+    targets = [
+        f"frames_{base}", f"stats_{base}", f"highlights_{base}",
+        f"events_{base}.json", f"goals_{base}.json", f"app_{base}.json",
+        f"score_timeline_{base}.json", f"{base}_highlights.mp4",
+    ]
+    removed = sum(1 for t in targets if _rm(t))
+    print(f"[cleanup] {removed} Artefakt(e) von {base} entfernt (Aufnahme bleibt).")
+
+
+def housekeeping():
+    """Vor dem Lauf aufraeumen: (1) verwaiste Scratch-Reste frueherer (oft
+    fehlgeschlagener) Laeufe — NUR `game_*` und aelter als ORPHAN_SCRATCH_HOURS,
+    damit weder Sample-Daten noch ein parallel laufender Lauf getroffen werden;
+    (2) Aufnahmen aelter als RECORDING_RETENTION_DAYS (opt-in, 0 = aus). Reels/
+    Clips werden NICHT verwaist-geloescht — ein nicht hochgeladenes Reel muss fuer
+    einen manuellen Retry erhalten bleiben.
+
+    @returns {void}
+    @example
+    housekeeping()  # am Anfang von main()
+    """
+    if not CLEANUP:
+        return
+    current = os.path.splitext(os.path.basename(VIDEO))[0] if VIDEO else ""
+    cutoff = time.time() - ORPHAN_SCRATCH_HOURS * 3600
+    patterns = ["frames_game_*", "stats_game_*", "events_game_*.json",
+                "goals_game_*.json", "app_game_*.json", "score_timeline_game_*.json"]
+    swept = 0
+    for pat in patterns:
+        for path in glob.glob(pat):
+            if current and current in path:
+                continue  # den aktuellen Lauf nie anfassen
+            try:
+                if os.path.getmtime(path) < cutoff and _rm(path):
+                    swept += 1
+            except OSError:
+                pass
+    if swept:
+        print(f"[cleanup] {swept} verwaiste Scratch-Rest(e) frueherer Laeufe entfernt.")
+    if RECORDING_RETENTION_DAYS > 0 and VIDEO:
+        rec_dir = os.path.dirname(VIDEO) or "."
+        rec_cutoff = time.time() - RECORDING_RETENTION_DAYS * 86400
+        pruned = 0
+        for mov in glob.glob(os.path.join(rec_dir, "*.mov")):
+            try:
+                if os.path.getmtime(mov) < rec_cutoff and _rm(mov):
+                    pruned += 1
+                    print(f"[cleanup] Alte Aufnahme entfernt (>{RECORDING_RETENTION_DAYS}d): {mov}")
+            except OSError:
+                pass
+        if pruned:
+            print(f"[cleanup] {pruned} Aufnahme(n) aelter als {RECORDING_RETENTION_DAYS} Tage entfernt.")
+
+
 def main():
     if not GAME_ID or not VIDEO:
         print("[pipeline] PIPE_GAME_ID / PIPE_VIDEO fehlen — Abbruch.")
@@ -314,6 +406,9 @@ def main():
 
     base = os.path.splitext(os.path.basename(VIDEO))[0]
     reel = f"{base}_highlights.mp4"   # make_highlights legt das Reel im CWD ab
+
+    # Vor dem Lauf aufraeumen (verwaiste Scratch-Reste + Aufnahmen-Retention).
+    housekeeping()
 
     # 0) Spieldaten holen: Taps, Aufstellung, pending-Status.
     data = fetch_timeline()
@@ -403,6 +498,9 @@ def main():
     url = f"https://storage.googleapis.com/{GCS_BUCKET}/{obj}"
     patch_status("ready", highlight_url=url)
     print(f"[pipeline] Fertig: {url}")
+
+    # Erfolgreich hochgeladen -> Scratch + lokales Reel/Clips dieses Spiels weg.
+    cleanup_run_artifacts(base)
 
 
 if __name__ == "__main__":
