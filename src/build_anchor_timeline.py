@@ -200,19 +200,24 @@ def read_board_minute(img):
             continue
         x, y, w, h, method, psm = region
         crop = img[y:y + h, x:x + w]
-        raw = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), None,
-                         fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-        for text in (
-            _read(_threshold(crop, method), psm, whitelist),
-            pytesseract.image_to_string(
-                raw, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789").strip(),
-        ):
-            nums = re.findall(r"\d+", text)
-            if not nums:
-                continue
-            value = int(nums[-1] if mode == "line" else nums[0])
-            if 1 <= value <= 120:
-                return value
+        if crop.size == 0:  # Region ausserhalb des Frames
+            continue
+        try:
+            raw = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), None,
+                             fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            for text in (
+                _read(_threshold(crop, method), psm, whitelist),
+                pytesseract.image_to_string(
+                    raw, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789").strip(),
+            ):
+                nums = re.findall(r"\d+", text)
+                if not nums:
+                    continue
+                value = int(nums[-1] if mode == "line" else nums[0])
+                if 1 <= value <= 120:
+                    return value
+        except Exception:  # OCR/Tesseract-Fehler -> Minute unbekannt, nicht crashen
+            continue
     return None
 
 
