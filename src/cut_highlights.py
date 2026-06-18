@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from paths import ASSETS
+from video_encode import codec_args, device_args, prep_filter
 
 # --- Konfiguration (zum Justieren) -----------------------------------------
 # Pfade ueberschreibbar per Env (vom Orchestrator gesetzt), sonst Defaults.
@@ -33,13 +34,9 @@ BANNER_FADE_IN = 0.5    # Sekunden Einblenden
 BANNER_HOLD = 4.5       # Sekunden voll sichtbar
 BANNER_FADE_OUT = 0.8   # Sekunden Ausblenden
 
-# Video-Encoding der Clips. H.265/HEVC bei 1080p -> kleine Dateien (~13 MB/30s
-# statt ~41 MB). Kleiner/groesser via VIDEO_CRF (hoeher = kleiner). Fuer maximale
-# Kompatibilitaet stattdessen H.264: VIDEO_CODEC="libx264", VIDEO_EXTRA=[].
-VIDEO_CODEC = "libx265"
-VIDEO_PRESET = "medium"
-VIDEO_CRF = 28
-VIDEO_EXTRA = ["-tag:v", "hvc1"]   # HEVC-Tag fuer QuickTime/Apple-Kompatibilitaet
+# Video-Encoding der Clips steckt in video_encode.py: VA-API H.264 (Hardware,
+# NUC — wichtig fuer 60fps) wenn ein Render-Node da ist, sonst libx265 (Software,
+# Dev-Mac). Steuerbar per Env REEL_ENCODER / REEL_BITRATE.
 
 # --- Einblendung -----------------------------------------------------------
 # Liegt overlay_template.png vor (eigene 1920x1080-RGBA-Grafik), wird sie
@@ -150,7 +147,7 @@ def cut(start, dur, out, overlay=None, full_frame=False):
     """Schneidet [start, start+dur] aus INPUT. overlay-PNG wird am Clip-Anfang
     ein- und nach BANNER_HOLD wieder ausgeblendet (fade auf dem Alpha-Kanal).
     full_frame=True bei 0:0 (eigene 1920x1080-Vorlage), sonst unten mittig (Banner)."""
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", str(start), "-i", INPUT]
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", *device_args(), "-ss", str(start), "-i", INPUT]
     if overlay:
         pos = "0:0" if full_frame else "(W-w)/2:H-h-60"
         fade_out_start = BANNER_FADE_IN + BANNER_HOLD
@@ -158,15 +155,16 @@ def cut(start, dur, out, overlay=None, full_frame=False):
             f"[1:v]format=rgba,"
             f"fade=t=in:st=0:d={BANNER_FADE_IN}:alpha=1,"
             f"fade=t=out:st={fade_out_start}:d={BANNER_FADE_OUT}:alpha=1[ov];"
-            f"[0:v][ov]overlay={pos},format=yuv420p[v]"  # format=yuv420p: Alpha weg (libx265 kann kein Alpha)
+            f"[0:v][ov]overlay={pos},{prep_filter()}[v]"  # Alpha weg + ggf. hwupload (VA-API)
         )
         cmd += ["-loop", "1", "-i", overlay,
                 "-filter_complex", fc,
                 "-map", "[v]"]
+    else:
+        cmd += ["-vf", prep_filter()]
     # -an: tonlos. Aufnahmen laufen ohne Audiospur (avfoundation-Drift), und
     # die Highlights brauchen keinen Ton.
-    cmd += ["-t", str(dur),
-            "-c:v", VIDEO_CODEC, "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF), *VIDEO_EXTRA,
+    cmd += ["-t", str(dur), *codec_args(),
             "-an", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
 

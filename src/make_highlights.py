@@ -21,6 +21,7 @@ import sys
 from detect_skin import detect_skin_from_dir
 from hud_profiles import HUD_PROFILES
 from paths import ASSETS, script
+from video_encode import codec_args, device_args, prep_filter
 
 # Sampling-Rate fuers Frame-Extrahieren. 2 fps ist sicherer, weil manche
 # Anstoß-Tafeln nur kurz stehen; 1 fps ist schneller (wie in der Testhalbzeit).
@@ -115,17 +116,17 @@ def make_still_segment(png, dur, out_path, out_fps=30, fade_in=False, fade_out=F
     """Standbild -> dur-Sekunden-Clip (1920x1080, H.265, tonlos). Die Bildrate
     (out_fps) muss zu den Tor-Clips passen (sonst xfade-Fehler). fade_in/out
     blendet am Anfang/Ende von/zu Schwarz."""
-    vf = ["scale=1920:1080", f"fps={out_fps}", "format=yuv420p"]
+    vf = ["scale=1920:1080", f"fps={out_fps}"]
     if fade_in:
         vf.append("fade=t=in:st=0:d=0.4")
     if fade_out:
         vf.append(f"fade=t=out:st={max(0.0, dur - 0.4):.3f}:d=0.4")
+    vf.append(prep_filter())  # yuv420p bzw. nv12+hwupload (VA-API)
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error",
+        ["ffmpeg", "-y", "-loglevel", "error", *device_args(),
          "-loop", "1", "-t", str(dur), "-i", png,
          "-vf", ",".join(vf),
-         "-c:v", "libx265", "-preset", "medium", "-crf", "28", "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
-         "-an", out_path],
+         *codec_args(), "-an", out_path],
         check=True)
 
 
@@ -147,12 +148,12 @@ def xfade_chain(segments, out_path, xfade=XFADE):
         out_v = f"[v{i}]"
         vparts.append(f"{prev_v}[{i}:v]xfade=transition=fade:duration={xfade}:offset={cum - xfade:.3f}{out_v}")
         prev_v, cum = out_v, cum + durs[i] - xfade
-    fc = ";".join(vparts)
+    # letztes xfade-Ergebnis fuer den Encoder vorbereiten (yuv420p bzw. hwupload)
+    fc = ";".join(vparts) + f";{prev_v}{prep_filter()}[vout]"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error"] + inputs +
-        ["-filter_complex", fc, "-map", prev_v,
-         "-c:v", "libx265", "-preset", "medium", "-crf", "28", "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
-         "-an", "-movflags", "+faststart", out_path],
+        ["ffmpeg", "-y", "-loglevel", "error", *device_args()] + inputs +
+        ["-filter_complex", fc, "-map", "[vout]",
+         *codec_args(), "-an", "-movflags", "+faststart", out_path],
         check=True)
 
 
