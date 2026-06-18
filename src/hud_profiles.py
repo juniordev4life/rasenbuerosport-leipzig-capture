@@ -55,16 +55,28 @@ HUD_PROFILES = {
             "ref": os.path.join(TEMPLATES, "bundesliga", "hud_ref.png"),
             "threshold": 0.5,
         },
-        # Elfmeterschiessen (mode "hud_gap"): langer HUD-weg-Block am Spielende
-        # (die Schuetzen-Icons ersetzen das normale HUD komplett -> hud_present
-        # == False). End-Screens (keine gruene Wiese) werden per green_region
-        # abgeschnitten.
+        # Elfmeterschiessen (mode "banner"): das Recap-Banner "TEAM X:Y TEAM" mit
+        # dunklem Score-Kasten ist waehrend des Schiessens dauerhaft sichtbar und
+        # traegt den laufenden Stand. detect_shootout liest ihn aus tally.box per
+        # Ziffern-Template (Connected-Component-Split + Pixel-Match, robuster als
+        # OCR) und rekonstruiert monoton. green_region/min_length bleiben fuer den
+        # Clip-Zuschnitt. HINWEIS: tally.box ist heimname-abhaengig kalibriert
+        # (DORTMUND-Layout); andere Heimteams ggf. nachkalibrieren.
         "shootout": {
-            "mode": "hud_gap",
+            "mode": "banner",
+            "label": "Elfmeterschießen",
+            "min_reads": 8,            # so viele lesbare Schiessen-Frames noetig
+            "max_gap_sec": 25,         # groessere Luecke -> getrennter Lese-Block
+            "tally": {
+                "box": (383, 60, 52, 34),   # "X:Y"-Kasten (1080p)
+                "templates": os.path.join(TEMPLATES, "bundesliga", "shootout"),
+                "min_digit_h": 14,
+                "min_digit_area": 40,
+                "match_min": 0.82,
+            },
             "green_region": (560, 560, 800, 400),
             "green_min": 0.30,
-            "min_length": 45,
-            "label": "Elfmeterschießen",
+            "min_length": 20,
         },
     },
     "premier": {

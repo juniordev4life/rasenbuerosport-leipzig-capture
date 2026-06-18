@@ -242,6 +242,33 @@ def main():
             run_step(script("merge_scorers.py"), env)
 
     goals = json.load(open(goals_json))
+
+    # Elfmeterschiessen erkennen (eigener Schritt, laeuft IMMER — unabhaengig vom
+    # Tor-Pfad) und als eigenen Clip ans Ende haengen. Das Ergebnis (Endstand/
+    # Sieger) legt detect_shootout in shootout_<base>.json ab; process_highlights
+    # liest es fuers Finalisieren (result_type=penalty + penalty_shootout).
+    shootout_json = f"shootout_{base}.json"
+    try:
+        run_step(script("detect_shootout.py"), {
+            "FRAMES_DIR": frames_dir, "HUD_PROFILE": profile,
+            "FPS": str(FPS), "OUT": shootout_json,
+        })
+        shootout = json.load(open(shootout_json))
+    except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+        print(f"      Elfmeterschiessen-Erkennung uebersprungen ({exc}).")
+        shootout = {}
+    if shootout.get("detected"):
+        goals.append({
+            "type": "shootout",
+            "clipStart": shootout["start_sec"],
+            "clipEnd": shootout["end_sec"],
+            "label": shootout.get("label", "Elfmeterschießen"),
+        })
+        with open(goals_json, "w") as f:
+            json.dump(goals, f)  # cut_highlights liest die DATEI -> zurueckschreiben
+        print(f"      Elfmeterschiessen erkannt {shootout['home']}:{shootout['away']} "
+              f"(Sieger {shootout['winner']}) -> Clip angehaengt.")
+
     if not goals:
         print("Keine Tore erkannt — kein Reel erstellt.")
         return
