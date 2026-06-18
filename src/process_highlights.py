@@ -132,6 +132,67 @@ def build_app_timeline(goals, players):
     return timeline
 
 
+def reconcile_to_final_score(timeline, final_score, players):
+    """Fuellt die Vision-Timeline auf den massgeblichen Endstand auf.
+
+    Die Events-Liste kann durchs Scrollen ein Tor verpassen (beobachtet: 2 von
+    3) — der Kopfzeilen-Score (`final_score` aus extract_postmatch) ist dagegen
+    immer sichtbar und damit autoritativ. Pro Team werden fehlende Tore als
+    Platzhalter ANGEHAENGT: laufender Stand bis zum Endstand, `minute=None`
+    (die API-Chronologiepruefung ueberspringt minutenlose Eintraege). 1v1: der
+    Platzhalter bekommt den einzigen Spieler der Seite als Schuetzen (richtiger
+    Schuetze, nur die Minute fehlt); bei mehreren bleibt der Schuetze offen.
+
+    Gibt eine NEUE Liste zurueck — das Original bleibt unangetastet, damit die
+    Highlights die unaufgefuellte Timeline nutzen (der Anker-Modus ordnet Tore
+    ueber Tafel-Reihenfolge + Minute zu; ein minutenloser Platzhalter wuerde das
+    stoeren). Kein/kleinerer Endstand -> Timeline unveraendert.
+
+    @param {object[]} timeline - App-Timeline der erkannten Tore
+    @param {object|null} final_score - {home, away} aus der Kopfzeile, oder None
+    @param {object[]} players - Aufstellung (fuer die 1v1-Schuetzen-Zuordnung)
+    @returns {object[]} ggf. aufgefuellte Kopie der Timeline
+    @example
+    // zwei erkannte Heimtore, Kopfzeile sagt 3:0 -> drei Eintraege, letzter {home:3, away:0}
+    reconcile_to_final_score(two_home_goals, {"home": 3, "away": 0}, players)
+    """
+    if not final_score:
+        return timeline
+    identified = {
+        "home": sum(1 for e in timeline if e.get("team") == "home"),
+        "away": sum(1 for e in timeline if e.get("team") == "away"),
+    }
+    missing = {
+        t: max(0, int(final_score.get(t, 0)) - identified[t]) for t in ("home", "away")
+    }
+    if not (missing["home"] or missing["away"]):
+        return timeline  # Vision deckt den Endstand ab (oder fand sogar mehr)
+
+    side_players = {"home": [], "away": []}
+    for p in players or []:
+        side_players.setdefault(p.get("team"), []).append(p)
+
+    padded = [dict(e) for e in timeline]
+    h = padded[-1]["home"] if padded else 0
+    a = padded[-1]["away"] if padded else 0
+    for team in ("home", "away"):
+        for _ in range(missing[team]):
+            if team == "home":
+                h += 1
+            else:
+                a += 1
+            entry = {
+                "home": h, "away": a, "team": team, "minute": None,
+                "period": "regular", "stoppage": 0, "event_type": "goal",
+            }
+            side = side_players.get(team) or []
+            if len(side) == 1 and side[0].get("player_id"):
+                entry["scored_by"] = side[0]["player_id"]
+                entry["scored_by_name"] = side[0].get("username")
+            padded.append(entry)
+    return padded
+
+
 def enrich_tap_timeline(timeline, players):
     """Tap-Timelines tragen in scored_by/assist_by SPIELER-IDs. Fuer das
     Highlight-Banner werden die Anzeigenamen ergaenzt (scored_by_name/
@@ -215,11 +276,21 @@ def main():
     elif post and post.get("goals"):
         timeline = build_app_timeline(post["goals"], (data or {}).get("players"))
         with open(app_path, "w") as f:
-            json.dump(timeline, f)
+            json.dump(timeline, f)   # unaufgefuellt -> Highlights/Anker-Modus
         print(f"[pipeline] Vision-Timeline (Events-Screen): {len(timeline)} Tore -> {app_path}")
         if data and data.get("pending"):
+            # Score autoritativ aus der Kopfzeile: die Events-Liste kann durchs
+            # Scrollen ein Tor verpassen — fuers Finalize auf den Endstand
+            # auffuellen (Highlights bleiben best-effort bei den erkannten Toren).
+            finalize_timeline = reconcile_to_final_score(
+                timeline, post.get("final_score"), (data or {}).get("players"))
+            if len(finalize_timeline) != len(timeline):
+                fs = post["final_score"]
+                print(f"[pipeline] Endstand laut Kopfzeile {fs['home']}:{fs['away']} > "
+                      f"{len(timeline)} erkannte Tore — Finalize-Timeline auf "
+                      f"{len(finalize_timeline)} aufgefuellt (Score autoritativ).")
             finalized = api_post("/recording/finalize",
-                                 {"game_id": GAME_ID, "score_timeline": timeline})
+                                 {"game_id": GAME_ID, "score_timeline": finalize_timeline})
             if finalized:
                 print(f"[pipeline] Spiel finalisiert: "
                       f"{finalized.get('score_home')}:{finalized.get('score_away')}")
