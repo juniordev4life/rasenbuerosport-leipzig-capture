@@ -1,0 +1,13 @@
+[Unit]
+Description=EA-FC office capture agent (RasenBuerosport)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/rasenbuerosport-leipzig-capture
+EnvironmentFile=%h/agent.env
+ExecStart=%h/rasenbuerosport-leipzig-capture/venv/bin/python -u src/office_agent.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
