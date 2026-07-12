@@ -128,6 +128,26 @@ werden, sonst encodet der Agent in Software-libx264.)
   sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
   ```
 
+### Aufnahme-Agent automatisch beim Boot starten (systemd)
+Der Agent (`office_agent.py`) läuft als **User-Service** (kein sudo/root nötig;
+lädt `agent.env`; `Restart=on-failure` bei Absturz). Die Unit liegt im Repo unter
+`deploy/eafc-agent.service`. Einrichten:
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/rasenbuerosport-leipzig-capture/deploy/eafc-agent.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+loginctl enable-linger "$USER"    # User-Manager startet schon vor dem Login -> Autostart ohne Anmeldung
+systemctl --user enable --now eafc-agent.service
+```
+Prüfen / Live-Log / nach einer `agent.env`-Änderung neu starten:
+```bash
+systemctl --user status eafc-agent
+journalctl --user -u eafc-agent -f     # ersetzt das alte /tmp/agent.log
+systemctl --user restart eafc-agent
+```
+Voraussetzung für Aufnahme + VA-API: der Benutzer muss in den Gruppen `render`
+und `video` sein (siehe Abschnitt 4).
+
 ## Fertig — was wir zum Weitermachen brauchen
 - die **IP-Adresse** des Rechners,
 - **Benutzername + Passwort** (oder ein SSH-Key).
