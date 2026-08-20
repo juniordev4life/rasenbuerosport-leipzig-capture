@@ -58,20 +58,69 @@ CLEANUP = os.environ.get("CLEANUP", "1") != "0"
 RECORDING_RETENTION_DAYS = int(os.environ.get("RECORDING_RETENTION_DAYS", "0"))
 ORPHAN_SCRATCH_HOURS = int(os.environ.get("ORPHAN_SCRATCH_HOURS", "24"))
 ORPHAN_REEL_HOURS = int(os.environ.get("ORPHAN_REEL_HOURS", "48"))
+# Ein Netzaussetzer darf einen fertigen Lauf nicht verlieren: Upload und
+# Status-PATCH werden wiederholt, und was dann noch offen ist, hinterlaesst
+# einen pending_*-Marker, den resume_pending() beim naechsten Lauf bzw. beim
+# Agent-Start fertigstellt. Vorher blieb ein Spiel dauerhaft auf "processing"
+# stehen, obwohl das Reel schon fertig auf der Platte lag.
+RETRY_ATTEMPTS = int(os.environ.get("RETRY_ATTEMPTS", "4"))
+RETRY_BACKOFF = float(os.environ.get("RETRY_BACKOFF", "5"))
+PENDING_GIVEUP_HOURS = int(os.environ.get("PENDING_GIVEUP_HOURS", "24"))
+RESUME_ONLY = os.environ.get("RESUME_ONLY") == "1"
 
 
-def patch_status(status, **extra):
-    """video_status (+ optional highlight_url) ans Spiel melden. Fehler nicht fatal."""
+def _with_retry(label, fn):
+    """fn() bis zu RETRY_ATTEMPTS mal versuchen, mit exponentiellem Backoff.
+
+    Fuer Netzoperationen, die an einem kurzen Aussetzer scheitern (Reel-Upload,
+    Status-PATCH) und die man deshalb nicht beim ersten Fehler aufgeben sollte.
+
+    @param {string} label - Name der Operation fuer die Log-Ausgabe
+    @param {function} fn - Aufruf ohne Argumente; True bedeutet Erfolg
+    @returns {boolean} True sobald fn() Erfolg meldet, sonst False
+    @example
+    _with_retry("Upload", lambda: subprocess.run(cmd).returncode == 0)
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        if fn():
+            return True
+        if attempt < RETRY_ATTEMPTS:
+            wait = RETRY_BACKOFF * (2 ** (attempt - 1))
+            print(f"[retry] {label}: Versuch {attempt}/{RETRY_ATTEMPTS} fehlgeschlagen "
+                  f"— neuer Versuch in {wait:.0f}s.")
+            time.sleep(wait)
+    print(f"[retry] {label}: nach {RETRY_ATTEMPTS} Versuchen aufgegeben.")
+    return False
+
+
+def patch_status(status, game_id=None, **extra):
+    """video_status (+ optional highlight_url) ans Spiel melden — mit Retry.
+
+    @param {string} status - recording|uploaded|processing|ready|failed
+    @param {string} [game_id] - Ziel-Spiel; Default ist das Spiel dieses Laufs
+    @returns {boolean} True wenn die Meldung angekommen ist
+    @example
+    patch_status("ready", highlight_url="https://...")  # -> True
+    """
+    gid = game_id or GAME_ID
     body = json.dumps({"video_status": status, **extra}).encode()
-    req = urllib.request.Request(
-        f"{API_BASE}/games/{GAME_ID}", data=body, method="PATCH",
-        headers={"X-Agent-Secret": AGENT_SECRET, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            r.read()
-        print(f"[pipeline] video_status={status} gemeldet.")
-    except Exception as e:
-        print(f"[pipeline] PATCH ({status}) fehlgeschlagen: {e}")
+
+    def once():
+        req = urllib.request.Request(
+            f"{API_BASE}/games/{gid}", data=body, method="PATCH",
+            headers={"X-Agent-Secret": AGENT_SECRET, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                r.read()
+            return True
+        except Exception as e:
+            print(f"[pipeline] PATCH ({status}) fehlgeschlagen: {e}")
+            return False
+
+    if not _with_retry(f"Status-PATCH {status}", once):
+        return False
+    print(f"[pipeline] video_status={status} gemeldet.")
+    return True
 
 
 def api_post(path, body, timeout=120):
@@ -429,7 +478,148 @@ def housekeeping():
             print(f"[cleanup] {pruned} Aufnahme(n) aelter als {RECORDING_RETENTION_DAYS} Tage entfernt.")
 
 
+def upload_reel(reel, obj):
+    """Reel oeffentlich in den Bucket laden — mit Retry.
+
+    @param {string} reel - Lokale Reel-Datei
+    @param {string} obj - Zielobjekt im Bucket (ohne gs://<bucket>/)
+    @returns {boolean} True wenn das Reel im Bucket liegt
+    @example
+    upload_reel("game_abc_highlights.mp4", "highlights/<gameId>.mp4")
+    """
+    dest = f"gs://{GCS_BUCKET}/{obj}"
+    print(f"[pipeline] Upload {reel} -> {dest}")
+
+    def once():
+        up = subprocess.run(
+            ["gsutil", "-h", "Content-Type:video/mp4", "cp", "-a", "public-read", reel, dest])
+        if up.returncode != 0:
+            print(f"[pipeline] Upload fehlgeschlagen (rc={up.returncode}).")
+            return False
+        return True
+
+    return _with_retry("Upload", once)
+
+
+def write_pending(base, game_id, stage, status="ready", reel=None, obj=None,
+                  url=None, penalty_fields=None):
+    """Offenen Abschluss eines fertigen Laufs festhalten.
+
+    Der Marker enthaelt alles, was resume_pending() zum Nachholen braucht. Er
+    entsteht nur, wenn Upload oder Status-PATCH trotz Retries nicht durchkamen —
+    typischerweise ein Netzausfall, waehrend das Reel schon fertig war.
+
+    @param {string} base - Datei-Basisname (game_<recId>)
+    @param {string} game_id - Spiel-ID fuer den Status-PATCH
+    @param {string} stage - "upload" (Reel noch nicht im Bucket) oder "patch"
+    @param {string} [status="ready"] - Zu meldender Status
+    @returns {void}
+    @example
+    write_pending("game_abc", gid, stage="upload", reel=reel, obj=obj, url=url)
+    """
+    data = {"base": base, "game_id": game_id, "stage": stage, "status": status,
+            "reel": reel, "obj": obj, "url": url,
+            "penalty_fields": penalty_fields or {}, "written_at": time.time()}
+    try:
+        with open(f"pending_{base}.json", "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"[pending] Abschluss offen ({stage}) — pending_{base}.json geschrieben; "
+              f"wird beim naechsten Lauf oder Agent-Start nachgeholt.")
+    except OSError as e:
+        print(f"[pending] Marker konnte nicht geschrieben werden: {e}")
+
+
+def _resume_upload(d):
+    """Upload-Stufe eines Markers nachholen.
+
+    @param {object} d - Marker-Inhalt
+    @returns {boolean} True wenn das Reel (jetzt) im Bucket liegt
+    @example
+    _resume_upload({"reel": "game_abc_highlights.mp4", "obj": "highlights/x.mp4"})
+    """
+    reel, obj = d.get("reel"), d.get("obj")
+    if not reel or not os.path.exists(reel):
+        print(f"[resume] Reel von {d.get('base')} fehlt — Upload nicht nachholbar.")
+        return False
+    return bool(obj) and upload_reel(reel, obj)
+
+
+def _resume_one(path, d):
+    """Einen Marker abarbeiten: ggf. hochladen, dann den Status melden.
+
+    Bleibt der Abschluss weiter unmoeglich, bleibt der Marker liegen — bis
+    PENDING_GIVEUP_HOURS erreicht sind; dann wird das Spiel als failed gemeldet,
+    damit es nicht endlos auf "processing" haengt.
+
+    @param {string} path - Pfad des Markers
+    @param {object} d - Marker-Inhalt
+    @returns {void}
+    @example
+    _resume_one("pending_game_abc.json", json.load(open("pending_game_abc.json")))
+    """
+    gid, base = d.get("game_id"), d.get("base")
+    penalty = d.get("penalty_fields") or {}
+    aged = (time.time() - float(d.get("written_at") or 0)) / 3600 > PENDING_GIVEUP_HOURS
+    status = d.get("status") or "ready"
+
+    if d.get("stage") == "upload":
+        if not _resume_upload(d):
+            if aged and patch_status("failed", game_id=gid, **penalty):
+                print(f"[resume] {base}: seit >{PENDING_GIVEUP_HOURS}h nicht "
+                      f"hochladbar — als failed gemeldet, Marker verworfen.")
+                _rm(path)
+            return
+        d["stage"] = "patch"
+
+    extra = {"highlight_url": d["url"]} if status == "ready" and d.get("url") else {}
+    if patch_status(status, game_id=gid, **extra, **penalty):
+        print(f"[resume] Spiel {gid} nachtraeglich als {status} gemeldet.")
+        _rm(path)
+        cleanup_run_artifacts(base)
+        return
+    if aged:
+        print(f"[resume] {base}: Status seit >{PENDING_GIVEUP_HOURS}h nicht "
+              f"meldbar — Marker verworfen.")
+        _rm(path)
+        return
+    try:                      # Upload-Fortschritt sichern: nicht zweimal laden
+        with open(path, "w") as f:
+            json.dump(d, f, indent=2)
+    except OSError:
+        pass
+
+
+def resume_pending():
+    """Abgebrochene Abschluesse frueherer Laeufe fertigstellen.
+
+    Laeuft am Anfang jedes Pipeline-Laufs und beim Agent-Start. Damit heilt ein
+    Netzausfall von selbst: das fertige Reel wird nachtraeglich hochgeladen und
+    das Spiel gemeldet, ohne dass jemand von Hand eingreifen muss.
+
+    @returns {void}
+    @example
+    resume_pending()  # RESUME_ONLY=1 python src/process_highlights.py
+    """
+    for path in sorted(glob.glob("pending_game_*.json")):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            print(f"[resume] {path} unlesbar — verworfen.")
+            _rm(path)
+            continue
+        if not d.get("game_id") or not d.get("base"):
+            print(f"[resume] {path} unvollstaendig — verworfen.")
+            _rm(path)
+            continue
+        print(f"[resume] Offener Abschluss: {path} (Stufe {d.get('stage')}).")
+        _resume_one(path, d)
+
+
 def main():
+    if RESUME_ONLY:          # nur offene Abschluesse nachholen, kein neuer Lauf
+        resume_pending()
+        return
     if not GAME_ID or not VIDEO:
         print("[pipeline] PIPE_GAME_ID / PIPE_VIDEO fehlen — Abbruch.")
         return
@@ -452,6 +642,10 @@ def main():
 
     # Vor dem Lauf aufraeumen (verwaiste Scratch-Reste + Aufnahmen-Retention).
     housekeeping()
+    # ... und offene Abschluesse frueherer Laeufe nachholen, bevor dieser Lauf
+    # die Maschine belegt: ein fertiges Reel soll nicht auf der Platte liegen
+    # bleiben, weil beim letzten Mal das Netz weg war.
+    resume_pending()
 
     # 0) Spieldaten holen: Taps, Aufstellung, pending-Status.
     data = fetch_timeline()
@@ -535,30 +729,37 @@ def main():
     if result.returncode != 0 or not os.path.exists(reel):
         # Häufigster gutartiger Fall: keine Tore erkannt -> kein Reel.
         print(f"[pipeline] Kein Reel erzeugt (rc={result.returncode}, reel da: {os.path.exists(reel)}).")
-        patch_status("failed", **penalty_fields)
+        if not patch_status("failed", **penalty_fields):
+            write_pending(base, GAME_ID, stage="patch", status="failed",
+                          penalty_fields=penalty_fields)
         cleanup_run_artifacts(base, keep_reel=True)
         return
 
     # 2) Reel öffentlich in den Bucket laden (Pendant zu file.save()+makePublic() der API).
     if not GCS_BUCKET:
         print("[pipeline] GCS_BUCKET nicht gesetzt — Upload übersprungen, Reel bleibt lokal.")
-        patch_status("failed", **penalty_fields)
+        if not patch_status("failed", **penalty_fields):
+            write_pending(base, GAME_ID, stage="patch", status="failed",
+                          penalty_fields=penalty_fields)
         cleanup_run_artifacts(base, keep_reel=True)
         return
     obj = f"{HIGHLIGHTS_PREFIX}/{GAME_ID}.mp4"
-    dest = f"gs://{GCS_BUCKET}/{obj}"
-    print(f"[pipeline] Upload {reel} -> {dest}")
-    up = subprocess.run(
-        ["gsutil", "-h", "Content-Type:video/mp4", "cp", "-a", "public-read", reel, dest])
-    if up.returncode != 0:
-        print(f"[pipeline] Upload fehlgeschlagen (rc={up.returncode}).")
-        patch_status("failed", **penalty_fields)
+    url = f"https://storage.googleapis.com/{GCS_BUCKET}/{obj}"
+    if not upload_reel(reel, obj):
+        # Das Reel IST fertig — nicht als failed abschreiben (das waere ein
+        # falscher Fehlerzustand plus ein zweiter Bericht, wenn es spaeter doch
+        # klappt), sondern vormerken und nachholen.
+        write_pending(base, GAME_ID, stage="upload", reel=reel, obj=obj, url=url,
+                      penalty_fields=penalty_fields)
         cleanup_run_artifacts(base, keep_reel=True)
         return
 
     # 3) Verknüpfen — die App rendert genau diese URL.
-    url = f"https://storage.googleapis.com/{GCS_BUCKET}/{obj}"
-    patch_status("ready", highlight_url=url, **penalty_fields)
+    if not patch_status("ready", highlight_url=url, **penalty_fields):
+        write_pending(base, GAME_ID, stage="patch", reel=reel, obj=obj, url=url,
+                      penalty_fields=penalty_fields)
+        cleanup_run_artifacts(base, keep_reel=True)
+        return
     print(f"[pipeline] Fertig: {url}")
 
     # Erfolgreich hochgeladen -> Scratch + lokales Reel/Clips dieses Spiels weg.
