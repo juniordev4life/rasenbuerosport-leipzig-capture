@@ -298,17 +298,23 @@ def submit_stats(stats_files):
         print(f"[pipeline] Match-Stats angewendet: {result.get('applied')}")
 
 
-def finalize_if_pending(timeline, data, post):
+def finalize_if_pending(timeline, data, post, penalty_fields=None):
     """Pending-Spiel mit der Timeline finalisieren, auf den Kopfzeilen-Endstand
     abgeglichen (Weg B). Die Highlights nutzen die unaufgefuellte `timeline`; nur
     die Finalize-Kopie wird ggf. aufgefuellt. No-op, wenn nicht pending.
 
+    Ein erkanntes Elfmeterschiessen geht MIT dem Finalize raus, nicht erst mit
+    dem spaeteren Status-PATCH: die API berechnet die ELO im Finalize, und sie
+    bewertet ein Elfmeterschiessen als Sieg statt als Remis. Kommt die
+    Information danach, ist die ELO schon gelaufen und der Sieg zaehlt null.
+
     @param {object[]} timeline - erkannte Tore (App-Format), unaufgefuellt
     @param {object|null} data - /recording/timeline-Antwort (pending, players, ...)
     @param {object|null} post - Nachspiel-Extraktion (liefert final_score)
+    @param {object|null} penalty_fields - {result_type, penalty_shootout} oder leer
     @returns {void}
     @example
-    finalize_if_pending(hud_timeline, data, post)  # finalisiert 3:0, auch wenn nur 2 erkannt
+    finalize_if_pending(hud_timeline, data, post, penalty_fields)
     """
     if not (data and data.get("pending")):
         if data:
@@ -321,7 +327,8 @@ def finalize_if_pending(timeline, data, post):
         print(f"[pipeline] Endstand laut Kopfzeile {final_score['home']}:{final_score['away']} > "
               f"{len(timeline)} erkannte Tore — Finalize-Timeline auf {len(finalize_timeline)} "
               f"aufgefuellt (Score autoritativ, Highlights best-effort).")
-    finalized = api_post("/recording/finalize", {"game_id": GAME_ID, "score_timeline": finalize_timeline})
+    body = {"game_id": GAME_ID, "score_timeline": finalize_timeline, **(penalty_fields or {})}
+    finalized = api_post("/recording/finalize", body)
     if finalized:
         print(f"[pipeline] Spiel finalisiert: {finalized.get('score_home')}:{finalized.get('score_away')}")
 
@@ -697,13 +704,13 @@ def main():
         timeline, hud_profile = detect_hud_goals(base, app_path, players)
         if timeline:
             print(f"[pipeline] HUD-native Timeline (1v1, Option B): {len(timeline)} Tore -> {app_path}")
-            finalize_if_pending(timeline, data, post)
+            finalize_if_pending(timeline, data, post, penalty_fields)
         elif post and post.get("goals"):
             timeline = build_app_timeline(post["goals"], players)
             with open(app_path, "w") as f:
                 json.dump(timeline, f)
             print(f"[pipeline] HUD-Erkennung leer — Fallback Events-Screen: {len(timeline)} Tore -> {app_path}")
-            finalize_if_pending(timeline, data, post)
+            finalize_if_pending(timeline, data, post, penalty_fields)
         else:
             print("[pipeline] Weder HUD noch Events-Screen lieferten Tore — klassische Erkennung.")
     elif post and post.get("goals"):
@@ -711,7 +718,7 @@ def main():
         with open(app_path, "w") as f:
             json.dump(timeline, f)   # unaufgefuellt -> Highlights/Anker-Modus
         print(f"[pipeline] Vision-Timeline (Events-Screen, 2v2): {len(timeline)} Tore -> {app_path}")
-        finalize_if_pending(timeline, data, post)
+        finalize_if_pending(timeline, data, post, penalty_fields)
     else:
         print("[pipeline] Keine Torliste (weder Taps, HUD noch Events-Screen) — "
               "klassische Ziffern-Erkennung.")

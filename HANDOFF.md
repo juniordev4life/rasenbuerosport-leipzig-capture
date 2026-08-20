@@ -168,6 +168,13 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
   (bei `reportRecordingStatus(…, "failed")` die passende Spielzeile mitziehen,
   bzw. beim Anlegen des Spiels den gemeldeten Fehlerstatus übernehmen) und/oder
   in die App (Blockade zeitlich begrenzen).
+- Ein erkanntes Elfmeterschießen MUSS mit dem `/recording/finalize` raus, nicht
+  erst mit dem Status-PATCH: die API berechnet die ELO im Finalize und bewertet
+  ein Elfmeterschießen als Sieg statt als Remis (bei uns gibt es keine
+  Unentschieden). Kommt die Information danach, ist die ELO schon gelaufen und
+  der Sieg zählt null — genau das war App-Issue #83. Der PATCH schickt die
+  Felder weiterhin mit (COALESCE, idempotent), das deckt nicht-pending Spiele ab.
+  Test: `venv/bin/python tests/test_finalize_penalty.py`.
 - In dieser Umgebung nur `python3` (nicht `python`); cv2 über `venv/bin/python`.
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
