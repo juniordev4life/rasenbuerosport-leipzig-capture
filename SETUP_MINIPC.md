@@ -160,6 +160,31 @@ räumt selbst auf — gesteuert über `agent.env`:
 | `ORPHAN_SCRATCH_HOURS` | `24` | Ab wann Frames/Stats/JSONs früherer Läufe als verwaist gelten |
 | `ORPHAN_REEL_HOURS` | `48` | Ab wann Reels/Clips gescheiterter Läufe weggeräumt werden (bis dahin bleiben sie für einen manuellen Upload-Retry) |
 
+### Netzausfall während des Uploads
+Reel-Upload und Status-Meldung werden wiederholt (`RETRY_ATTEMPTS`, exponentieller
+Backoff über `RETRY_BACKOFF`). Kommt danach noch nichts durch, hinterlässt der Lauf
+einen Marker `pending_game_<id>.json` neben dem fertigen Reel. Beim nächsten
+Pipeline-Lauf **und** beim Agent-Start wird er abgearbeitet: Reel hochladen, Status
+melden, Marker weg. Das Spiel wird dabei bewusst **nicht** als `failed` gemeldet —
+das Reel existiert ja, es fehlt nur der Transport.
+
+| Variable | Default | Wirkung |
+|----------|---------|---------|
+| `RETRY_ATTEMPTS` | `4` | Versuche pro Upload bzw. Status-PATCH |
+| `RETRY_BACKOFF` | `5` | Sekunden bis zum zweiten Versuch, danach verdoppelnd |
+| `PENDING_GIVEUP_HOURS` | `24` | Danach wird ein nicht abschließbarer Marker als `failed` gemeldet und verworfen — damit kein Spiel endlos auf `processing` hängt |
+
+Manuell nachholen (ohne auf ein neues Spiel zu warten):
+```bash
+cd ~/rasenbuerosport-leipzig-capture
+RESUME_ONLY=1 venv/bin/python src/process_highlights.py
+```
+
+Die Zustandsmaschine dahinter ist getestet (lokaler API-Stub, kein Netz nötig):
+```bash
+bash tests/test_resume.sh
+```
+
 Aufgeräumt wird nach **jedem** Lauf — auch nach einem gescheiterten — plus beim
 Start des nächsten Laufs (Verwaist-Sweep, fängt hart abgebrochene Läufe). Platz
 gelegentlich prüfen:

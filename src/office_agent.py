@@ -236,6 +236,24 @@ def start_highlight_pipeline(game_id, video_path):
         report_status(game_id, "failed")
 
 
+def resume_pending_uploads():
+    """Offene Highlight-Abschluesse frueherer Laeufe nachholen (RESUME_ONLY-Lauf
+    der Pipeline). Beim Agent-Start aufgerufen: ein Reel, dessen Upload an einem
+    Netzausfall scheiterte, wird so fertiggestellt, ohne dass erst wieder
+    gespielt werden muss.
+
+    @returns {void}
+    @example
+    resume_pending_uploads()  # am Anfang von main()
+    """
+    try:
+        subprocess.Popen([sys.executable, script("process_highlights.py")],
+                         env={**os.environ, "RESUME_ONLY": "1"}, start_new_session=True)
+        print("  Offene Highlight-Abschluesse werden geprueft (Resume).")
+    except Exception as e:
+        print(f"  Resume-Lauf konnte nicht gestartet werden: {e}")
+
+
 def report_status(game_id, status, **extra):
     """video_status an die echte Spiel-Zeile melden (PATCH /games/:id). Erst ab
     Upload genutzt. Fehler nicht fatal."""
@@ -290,6 +308,7 @@ def main():
     global _proc, _rec_path, _handled_abort_gid
     print(f"Office-Agent läuft. API={API_BASE}  Capture-Plattform={platform.system()}"
           f"{'  [Dev: lokale Kommando-Datei]' if LOCAL_COMMAND_FILE else ''}")
+    resume_pending_uploads()
     while True:
         cmd = get_next_command()
         action, gid = cmd.get("action"), cmd.get("game_id")

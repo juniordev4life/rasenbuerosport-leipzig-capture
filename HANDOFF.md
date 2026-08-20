@@ -156,6 +156,18 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
   `/tmp/postmatch_*` und für Reels/Clips gescheiterter Läufe, und
   `cleanup_run_artifacts` läuft auch im Fehlerfall. Knöpfe: SETUP_MINIPC.md →
   „Speicherplatz & Aufräumen".
+- OFFENE LÜCKE (nicht im Capture-Repo lösbar): stirbt ffmpeg SOFORT beim Start
+  (z.B. `No space left on device`), meldet der Agent `failed` nur auf den
+  provisorischen Aufnahme-Kanal (`report_recording_status` → `recording_status`).
+  Die echte `game_id` kennt er da noch nicht — das Spiel existiert erst später —,
+  also bleibt `games.video_status` auf `NULL`. Die App blockiert daraufhin den
+  Spielbericht dauerhaft: ihr `reportBlocked` ist wahr, sobald eine
+  `recording_id` gesetzt ist und der Status weder `ready` noch `failed` ist —
+  Ergebnis ist ein Spinner „Bericht wird vorbereitet", der nie endet (08/2026 an
+  6 Spielen aufgetreten, per Hand auf `failed` gesetzt). Fix gehört in die API
+  (bei `reportRecordingStatus(…, "failed")` die passende Spielzeile mitziehen,
+  bzw. beim Anlegen des Spiels den gemeldeten Fehlerstatus übernehmen) und/oder
+  in die App (Blockade zeitlich begrenzen).
 - In dieser Umgebung nur `python3` (nicht `python`); cv2 über `venv/bin/python`.
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
