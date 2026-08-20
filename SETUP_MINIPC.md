@@ -148,6 +148,29 @@ systemctl --user restart eafc-agent
 Voraussetzung für Aufnahme + VA-API: der Benutzer muss in den Gruppen `render`
 und `video` sein (siehe Abschnitt 4).
 
+### Speicherplatz & Aufräumen
+Ein Lauf erzeugt ein Vielfaches der Aufnahme an Zwischendaten: Frames bei 1080p60,
+geschnittene Clips, das Reel und ~2 GB Postmatch-Temp unter `/tmp`. Die Pipeline
+räumt selbst auf — gesteuert über `agent.env`:
+
+| Variable | Default | Wirkung |
+|----------|---------|---------|
+| `CLEANUP` | `1` | `0` schaltet **jedes** Aufräumen ab (nur zum Debuggen) |
+| `RECORDING_RETENTION_DAYS` | `0` | `0` = Aufnahmen dauerhaft behalten; `>0` = älter als X Tage löschen (Büro-Box: `7`) |
+| `ORPHAN_SCRATCH_HOURS` | `24` | Ab wann Frames/Stats/JSONs früherer Läufe als verwaist gelten |
+| `ORPHAN_REEL_HOURS` | `48` | Ab wann Reels/Clips gescheiterter Läufe weggeräumt werden (bis dahin bleiben sie für einen manuellen Upload-Retry) |
+
+Aufgeräumt wird nach **jedem** Lauf — auch nach einem gescheiterten — plus beim
+Start des nächsten Laufs (Verwaist-Sweep, fängt hart abgebrochene Läufe). Platz
+gelegentlich prüfen:
+```bash
+df -h ~
+du -sh ~/rasenbuerosport-leipzig-capture/recordings /tmp
+```
+Läuft die Platte voll, scheitern zuerst die teuren Schritte (Reel), dann die
+kleinen (Stats) — und jeder Fehlversuch hinterlässt neue Reste. Diese Spirale hat
+im August 2026 eine Woche Ausfall verursacht (HANDOFF.md → Gotchas).
+
 ## Fertig — was wir zum Weitermachen brauchen
 - die **IP-Adresse** des Rechners,
 - **Benutzername + Passwort** (oder ein SSH-Key).

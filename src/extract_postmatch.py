@@ -29,10 +29,12 @@ Env:
   EVENTS_MODEL     Default claude-sonnet-4-6 (validiert: bl-11-10 21/21 Tore)
   MAX_EVENT_FRAMES Obergrenze Bilder an Claude (Default 12)
 """
+import atexit
 import base64
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -130,6 +132,38 @@ EVENTS_SCHEMA = {
 }
 
 
+# Aufraeumen der Temp-Verzeichnisse aus tail_frames(). Jeder Lauf zieht ~2 GB
+# Frames vom Video-Ende; ohne Loeschen summiert sich das (auf der Buero-Box waren
+# es 75 Verzeichnisse / 134 GB in /tmp, bis die Platte volllief und die gesamte
+# Pipeline kippte). CLEANUP=0 behaelt sie zum Debuggen — gleiche Konvention wie
+# in process_highlights.py.
+CLEANUP = os.environ.get("CLEANUP", "1") != "0"
+_TMP_DIRS = []
+
+
+def _rm_tmp_dirs():
+    """Loescht die von tail_frames() angelegten Temp-Verzeichnisse.
+
+    Laeuft per atexit, damit auch ein Abbruch mitten im Lauf (Exception,
+    SystemExit) nichts liegen laesst. Die Frames sind aus der Aufnahme jederzeit
+    reproduzierbar; die Stats-Frames liegen bereits in STATS_DIR.
+
+    @returns {void}
+    @example
+    _rm_tmp_dirs()  # per atexit registriert, kein manueller Aufruf noetig
+    """
+    if not CLEANUP:
+        if _TMP_DIRS:
+            print(f"[postmatch] CLEANUP=0 — Temp behalten: {', '.join(_TMP_DIRS)}")
+        return
+    for d in _TMP_DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+    _TMP_DIRS.clear()
+
+
+atexit.register(_rm_tmp_dirs)
+
+
 def tail_frames():
     """Liefert die zu scannenden Frame-Pfade (Video-Ende)."""
     count = int(TAIL_SECONDS * FPS)
@@ -139,6 +173,7 @@ def tail_frames():
     if not VIDEO or not os.path.exists(VIDEO):
         raise SystemExit("VIDEO oder FRAMES_DIR muss gesetzt sein.")
     tmp = tempfile.mkdtemp(prefix="postmatch_")
+    _TMP_DIRS.append(tmp)   # -> _rm_tmp_dirs() am Prozessende
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-sseof", f"-{TAIL_SECONDS}",
          "-i", VIDEO, "-vf", f"fps={FPS}", os.path.join(tmp, "tail_%05d.png")],

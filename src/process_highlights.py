@@ -34,6 +34,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -50,10 +51,13 @@ VIDEO = os.environ.get("PIPE_VIDEO")
 # Aufraeumen nach dem Lauf. CLEANUP=0 schaltet alles ab. RECORDING_RETENTION_DAYS
 # >0 loescht Aufnahmen aelter als X Tage (OPT-IN, 0 = behalten — die Aufnahme ist
 # die Re-Processing-Versicherung). ORPHAN_SCRATCH_HOURS schuetzt frische bzw.
-# parallel laufende Scratch-Reste vor dem Verwaist-Sweep.
+# parallel laufende Scratch-Reste vor dem Verwaist-Sweep. ORPHAN_REEL_HOURS ist
+# das Retry-Fenster fuer Reels/Clips gescheiterter Laeufe: lang genug fuer einen
+# manuellen Upload-Versuch, aber endlich — vorher blieben sie fuer immer liegen.
 CLEANUP = os.environ.get("CLEANUP", "1") != "0"
 RECORDING_RETENTION_DAYS = int(os.environ.get("RECORDING_RETENTION_DAYS", "0"))
 ORPHAN_SCRATCH_HOURS = int(os.environ.get("ORPHAN_SCRATCH_HOURS", "24"))
+ORPHAN_REEL_HOURS = int(os.environ.get("ORPHAN_REEL_HOURS", "48"))
 
 
 def patch_status(status, **extra):
@@ -320,35 +324,47 @@ def _rm(path):
         return False
 
 
-def cleanup_run_artifacts(base):
-    """Nach ERFOLGREICHEM Lauf: Scratch (Frames/Stats/Zwischen-JSONs) + lokales
-    Reel + Clips dieses Spiels loeschen — alles regenerierbar bzw. schon im
-    Bucket. Die Aufnahme (.mov) bleibt; ihre Retention laeuft separat. CLEANUP=0
-    schaltet ab.
+def cleanup_run_artifacts(base, keep_reel=False):
+    """Scratch (Frames/Stats/Clips/Zwischen-JSONs) dieses Spiels loeschen — alles
+    aus der Aufnahme reproduzierbar. Die Aufnahme (.mov) bleibt; ihre Retention
+    laeuft separat. CLEANUP=0 schaltet ab.
+
+    Laeuft nach JEDEM Lauf, auch nach einem gescheiterten: sonst bleibt der
+    Scratch jedes Fehlversuchs liegen, die Platte laeuft voll und weitere Laeufe
+    scheitern daran — eine Spirale, die auf der Buero-Box eine Woche Ausfall
+    verursacht hat. Im Fehlerfall schont keep_reel=True das fertige Reel, damit
+    ein fehlgeschlagener Upload manuell nachgeholt werden kann; der Verwaist-
+    Sweep raeumt es nach ORPHAN_REEL_HOURS ab.
 
     @param {string} base - Datei-Basisname (z.B. game_<recId>)
+    @param {boolean} [keep_reel=False] - Fertiges Reel fuer einen Upload-Retry behalten
     @returns {void}
     @example
-    cleanup_run_artifacts("game_abc")  # entfernt frames_game_abc/, das Reel etc.
+    cleanup_run_artifacts("game_abc")                  # Erfolg: alles weg
+    cleanup_run_artifacts("game_abc", keep_reel=True)  # Fehler: Reel bleibt
     """
     if not CLEANUP:
         return
     targets = [
         f"frames_{base}", f"stats_{base}", f"highlights_{base}",
         f"events_{base}.json", f"goals_{base}.json", f"app_{base}.json",
-        f"score_timeline_{base}.json", f"{base}_highlights.mp4",
+        f"score_timeline_{base}.json",
     ]
+    if not keep_reel:
+        targets.append(f"{base}_highlights.mp4")
     removed = sum(1 for t in targets if _rm(t))
-    print(f"[cleanup] {removed} Artefakt(e) von {base} entfernt (Aufnahme bleibt).")
+    kept = " (Reel fuer Retry behalten)" if keep_reel else ""
+    print(f"[cleanup] {removed} Artefakt(e) von {base} entfernt (Aufnahme bleibt){kept}.")
 
 
 def housekeeping():
     """Vor dem Lauf aufraeumen: (1) verwaiste Scratch-Reste frueherer (oft
     fehlgeschlagener) Laeufe — NUR `game_*` und aelter als ORPHAN_SCRATCH_HOURS,
     damit weder Sample-Daten noch ein parallel laufender Lauf getroffen werden;
-    (2) Aufnahmen aelter als RECORDING_RETENTION_DAYS (opt-in, 0 = aus). Reels/
-    Clips werden NICHT verwaist-geloescht — ein nicht hochgeladenes Reel muss fuer
-    einen manuellen Retry erhalten bleiben.
+    (2) Aufnahmen aelter als RECORDING_RETENTION_DAYS (opt-in, 0 = aus);
+    (3) Reels/Clips gescheiterter Laeufe aelter als ORPHAN_REEL_HOURS — sie bleiben
+    fuer einen manuellen Upload-Retry liegen, aber nicht unbegrenzt;
+    (4) verwaiste Postmatch-Temps in /tmp, falls ein Lauf hart abgebrochen wurde.
 
     @returns {void}
     @example
@@ -372,6 +388,32 @@ def housekeeping():
                 pass
     if swept:
         print(f"[cleanup] {swept} verwaiste Scratch-Rest(e) frueherer Laeufe entfernt.")
+
+    # Reels/Clips gescheiterter Laeufe: laenger halten als den uebrigen Scratch
+    # (Upload-Retry), aber nicht ewig — sonst summieren sie sich unbemerkt.
+    reel_cutoff = time.time() - ORPHAN_REEL_HOURS * 3600
+    for pat in ("highlights_game_*", "game_*_highlights.mp4"):
+        for path in glob.glob(pat):
+            if current and current in path:
+                continue
+            try:
+                if os.path.getmtime(path) < reel_cutoff and _rm(path):
+                    print(f"[cleanup] Verwaistes Reel/Clips entfernt "
+                          f"(>{ORPHAN_REEL_HOURS}h): {path}")
+            except OSError:
+                pass
+
+    # Temp-Verzeichnisse der Nachspiel-Extraktion (~2 GB pro Lauf).
+    # extract_postmatch raeumt sie selbst per atexit ab; das hier faengt die
+    # Faelle, in denen der Prozess hart gestorben ist (SIGKILL, Stromausfall).
+    # Genau so sind auf der Buero-Box 134 GB in /tmp aufgelaufen.
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), "postmatch_*")):
+        try:
+            if os.path.getmtime(path) < cutoff and _rm(path):
+                print(f"[cleanup] Verwaistes Postmatch-Temp entfernt: {path}")
+        except OSError:
+            pass
+
     if RECORDING_RETENTION_DAYS > 0 and VIDEO:
         rec_dir = os.path.dirname(VIDEO) or "."
         rec_cutoff = time.time() - RECORDING_RETENTION_DAYS * 86400
@@ -494,12 +536,14 @@ def main():
         # Häufigster gutartiger Fall: keine Tore erkannt -> kein Reel.
         print(f"[pipeline] Kein Reel erzeugt (rc={result.returncode}, reel da: {os.path.exists(reel)}).")
         patch_status("failed", **penalty_fields)
+        cleanup_run_artifacts(base, keep_reel=True)
         return
 
     # 2) Reel öffentlich in den Bucket laden (Pendant zu file.save()+makePublic() der API).
     if not GCS_BUCKET:
         print("[pipeline] GCS_BUCKET nicht gesetzt — Upload übersprungen, Reel bleibt lokal.")
         patch_status("failed", **penalty_fields)
+        cleanup_run_artifacts(base, keep_reel=True)
         return
     obj = f"{HIGHLIGHTS_PREFIX}/{GAME_ID}.mp4"
     dest = f"gs://{GCS_BUCKET}/{obj}"
@@ -509,6 +553,7 @@ def main():
     if up.returncode != 0:
         print(f"[pipeline] Upload fehlgeschlagen (rc={up.returncode}).")
         patch_status("failed", **penalty_fields)
+        cleanup_run_artifacts(base, keep_reel=True)
         return
 
     # 3) Verknüpfen — die App rendert genau diese URL.

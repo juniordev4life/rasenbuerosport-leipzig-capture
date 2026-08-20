@@ -146,6 +146,16 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
 - Maschinen-Auth = Shared Secret im Header (`X-Agent-Secret`), wie das
   Scheduler-Muster der API — KEIN Firebase-User-Token für den Agent. Wert in
   der API-`.env` (`AGENT_SECRET`) und im Agent-Env muss identisch sein, sonst 401.
+- Aufräumen ist Teil der Pipeline, nicht Kosmetik: `extract_postmatch` legt pro
+  Lauf ~2 GB Frames unter `/tmp/postmatch_*` ab. Die wurden bis 08/2026 nie
+  gelöscht → 75 Verzeichnisse / 134 GB → Platte voll. Reihenfolge des Verfalls:
+  erst scheitert das Reel (teuerster Schritt), dann die Stats, dann bleiben
+  Spiele in `processing` hängen — also kein Highlight UND kein Spielbericht,
+  denn den triggert erst der finale Status-PATCH. Kostete eine Woche Ausfall.
+  Seitdem: `atexit`-Cleanup in `extract_postmatch`, Verwaist-Sweep für
+  `/tmp/postmatch_*` und für Reels/Clips gescheiterter Läufe, und
+  `cleanup_run_artifacts` läuft auch im Fehlerfall. Knöpfe: SETUP_MINIPC.md →
+  „Speicherplatz & Aufräumen".
 - In dieser Umgebung nur `python3` (nicht `python`); cv2 über `venv/bin/python`.
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
