@@ -102,9 +102,9 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
    - In der App: Spiel anlegen → Anpfiff (= start) → speichern (= stop).
 4b. ZERO-TRACKING gebaut (extract_postmatch.py + process_highlights): Die
    Spieler blättern nach Abpfiff durchs Stats-Menü (machen sie eh) — die
-   Pipeline scannt das Video-Ende, erkennt die Menü-Tabs (Template
-   templates/menu/tab_strip.png, skin-/team-unabhängig validiert an BL- und
-   Cross-Aufnahmen), zieht je Stats-Tab den schärfsten Frame (-> Bucket ->
+   Pipeline scannt das Video-Ende, erkennt die Menü-Tabs (ein Template je
+   Tab-Label in templates/menu/labels/, skin-/team-unabhängig, validiert an
+   FC26 und FC27), zieht je Stats-Tab den schärfsten Frame (-> Bucket ->
    POST /recording/stats, ersetzt den Foto-Upload) und liest OHNE Taps die
    Torliste aus dem Events-Tab per Claude Vision (-> Anker-Modus + POST
    /recording/finalize bei pending-Spielen: Ergebnis + nachgelagerte ELO).
@@ -175,6 +175,18 @@ LOCAL_COMMAND_FILE=command.json venv/bin/python src/office_agent.py
   der Sieg zählt null — genau das war App-Issue #83. Der PATCH schickt die
   Felder weiterhin mit (COALESCE, idempotent), das deckt nicht-pending Spiele ab.
   Test: `venv/bin/python tests/test_finalize_penalty.py`.
+- Neue FC-Version → Stats-Erkennung prüfen. `extract_postmatch` erkennt das
+  Stats-Menü an den sechs Tab-Labels, jedes einzeln gesucht (Templates in
+  `templates/menu/labels/`, ±10 px Spielraum). Früher war es EIN Template der
+  ganzen Tab-Zeile — mit FC27 rückten die Labels um 1–3 px gegeneinander, das
+  Template fiel unter seine Schwelle, und ab der Umstellung (22.09.2026) kamen
+  keine Stats mehr an. Still, denn ohne Frames meldet `submit_stats` nichts;
+  Highlights liefen normal weiter. Schnellcheck auf der Box:
+  `journalctl --user -u eafc-agent | grep "postmatch\]"` — `Keine Stats-Tabs …
+  gefunden` heißt: Erkennung greift nicht. Ändern sich Schrift oder Tab-Namen,
+  die sechs Labels neu aus einem Menü-Frame ausschneiden (jedes, während es
+  NICHT aktiv ist — das aktive ist fett) und `LABELS` auf die neuen Positionen
+  setzen. Test: `venv/bin/python tests/test_menu_detection.py`.
 - In dieser Umgebung nur `python3` (nicht `python`); cv2 über `venv/bin/python`.
 - Git künftig: Feature-Branch + PR. Der Initial-Commit auf `main` ist die
   Bootstrap-Ausnahme.
@@ -195,4 +207,5 @@ Pfade sind CWD-unabhängig über `src/paths.py` verankert.
 - `src/tools/build_templates*.py` — Dev-Tools, erzeugen Ziffern-Templates aus
   `samples/`.
 - `templates/` CV-Templates · `assets/` Branding (intro/outro/overlay) ·
-  `fixtures/` Ground-Truth-Timelines · `docs/` Historie.
+  `fixtures/` Ground-Truth-Timelines + Tab-Zeilen für den Menü-Test
+  (`fixtures/menu/`) · `docs/` Historie.
