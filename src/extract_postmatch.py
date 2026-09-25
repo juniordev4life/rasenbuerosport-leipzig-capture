@@ -13,9 +13,15 @@ Aufnahmen). Dieses Skript scannt das VIDEO-ENDE und liefert zwei Dinge:
      scorer}]} nach EVENTS_OUT. Ersetzt die App-Taps als Torquelle
      (Zero-Tracking; Zuordnung zu Office-Spielern macht process_highlights).
 
-Erkennung: Template-Match der Tab-Zeile (templates/menu/tab_strip.png,
-korr >= 0.6 vs <= 0.3 bei Nicht-Menü-Frames) + hellstes Label = aktiver Tab
-(mind. 1.15x so hell wie der Schnitt der übrigen).
+Erkennung: jedes der sechs Tab-Labels wird einzeln per Template gesucht
+(templates/menu/labels/<tab>.png), jeweils in einem kleinen Fenster um seine
+Soll-Position. Einzeln, weil sich die Abstände zwischen den Labels von
+FC-Version zu FC-Version um ein paar Pixel verschieben (FC26 -> FC27: 1-3 px);
+ein Template der ganzen Zeile bricht daran. Menü offen = mind. 5 von 6 Labels
+>= 0.7 (das aktive, fett gesetzte Label korreliert schwächer; Spielszenen
+erreichen höchstens 0.45). Aktiver Tab = hellste Textpixel (98. Perzentil),
+nicht der Flächen-Mittelwert: die Zeile ist halbtransparent, und ein heller
+Hintergrund liess sonst ein inaktives Label gewinnen.
 
 Env:
   VIDEO            Aufnahme (.mov) — ODER FRAMES_DIR mit fertigen Frames
@@ -40,6 +46,7 @@ import sys
 import tempfile
 
 import cv2
+import numpy as np
 
 from paths import TEMPLATES
 
@@ -53,18 +60,19 @@ SKIP_EVENTS = os.environ.get("SKIP_EVENTS") == "1"
 EVENTS_MODEL = os.environ.get("EVENTS_MODEL", "claude-sonnet-4-6")
 MAX_EVENT_FRAMES = int(os.environ.get("MAX_EVENT_FRAMES", "12"))
 
-STRIP_TEMPLATE = os.path.join(TEMPLATES, "menu", "tab_strip.png")
-STRIP_SEARCH = (500, 150, 950, 110)          # x, y, w, h Suchfenster Tab-Zeile
-STRIP_THRESHOLD = 0.6
-ACTIVE_RATIO = 1.15                           # aktives Label vs. Schnitt der übrigen
-LABELS = {                                    # Label-Boxen (1920x1080)
-    "overview": (555, 185, 100, 26),          # Übersicht
-    "ballbesitz": (705, 185, 100, 26),
-    "schuss": (845, 185, 165, 26),
-    "passes": (1055, 185, 62, 26),            # Pässe
-    "defense": (1160, 185, 68, 26),           # Abwehr
-    "events": (1280, 185, 72, 26),
+LABEL_DIR = os.path.join(TEMPLATES, "menu", "labels")
+LABELS = {                                    # Soll-Position (x, y) je Label-Template, 1920x1080
+    "overview": (556, 183),                   # Übersicht
+    "ballbesitz": (699, 188),
+    "schuss": (840, 188),                     # Schussverhalten
+    "passes": (1052, 188),                    # Pässe
+    "defense": (1152, 188),                   # Abwehr
+    "events": (1276, 188),
 }
+LABEL_SLACK = (10, 6)                         # Suchspielraum je Label (x, y) in px
+LABEL_THRESHOLD = 0.7
+MIN_LABELS = 5
+ACTIVE_RATIO = 1.3                            # Textpixel aktives Label vs. Median der übrigen
 STATS_TABS = ("overview", "passes", "defense")
 EVENTS_ROI = (480, 260, 970, 740)             # Listen-Bereich fürs Scroll-Dedupe
 
@@ -181,18 +189,49 @@ def tail_frames():
     return sorted(glob.glob(os.path.join(tmp, "*.png")))
 
 
-def classify(img, strip_ref):
-    """(praesent, aktiver_tab) für einen Frame."""
-    sx, sy, sw, sh = STRIP_SEARCH
-    win = cv2.cvtColor(img[sy:sy + sh, sx:sx + sw], cv2.COLOR_BGR2GRAY)
-    corr = float(cv2.matchTemplate(win, strip_ref, cv2.TM_CCOEFF_NORMED).max())
-    if corr < STRIP_THRESHOLD:
-        return False, None
+def load_label_refs():
+    """Lädt die sechs Label-Templates (Graustufen); bricht ab, wenn eins fehlt.
+
+    @returns {dict} Tab-Key -> Template
+    @example
+    refs = load_label_refs()  # {"overview": array(...), "ballbesitz": ..., ...}
+    """
+    refs = {}
+    for tab in LABELS:
+        path = os.path.join(LABEL_DIR, f"{tab}.png")
+        ref = cv2.imread(path, 0)
+        if ref is None:
+            raise SystemExit(f"Label-Template fehlt: {path}")
+        refs[tab] = ref
+    return refs
+
+
+def classify(img, refs):
+    """(praesent, aktiver_tab) für einen Frame.
+
+    @param {ndarray} img - BGR-Frame in 1920x1080
+    @param {dict} refs - Label-Templates aus load_label_refs()
+    @returns {tuple} (True, tab) bei offenem Menü, (True, None) im Übergang
+        ohne klar aktiven Tab, (False, None) ohne Menü
+    @example
+    classify(cv2.imread("tail_00823.png"), refs)  # (True, "passes")
+    """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    bright = {k: float(gray[y:y + h, x:x + w].mean()) for k, (x, y, w, h) in LABELS.items()}
-    active = max(bright, key=bright.get)
-    others = [v for k, v in bright.items() if k != active]
-    if bright[active] < ACTIVE_RATIO * (sum(others) / len(others)):
+    dx, dy = LABEL_SLACK
+    found, text = 0, {}
+    for tab, (x, y) in LABELS.items():
+        h, w = refs[tab].shape
+        win = gray[y - dy:y + h + dy, x - dx:x + w + dx]
+        res = cv2.matchTemplate(win, refs[tab], cv2.TM_CCOEFF_NORMED)
+        _, corr, _, (mx, my) = cv2.minMaxLoc(res)
+        if corr >= LABEL_THRESHOLD:
+            found += 1
+        text[tab] = float(np.percentile(win[my:my + h, mx:mx + w], 98))
+    if found < MIN_LABELS:
+        return False, None
+    active = max(text, key=text.get)
+    others = [v for k, v in text.items() if k != active]
+    if text[active] < ACTIVE_RATIO * max(1.0, float(np.median(others))):
         return True, None   # Menü offen, aber kein Tab klar aktiv (Übergang)
     return True, active
 
@@ -325,9 +364,7 @@ def read_penalty_shootout(paths):
 
 
 def main():
-    strip_ref = cv2.imread(STRIP_TEMPLATE, 0)
-    if strip_ref is None:
-        raise SystemExit(f"Tab-Template fehlt: {STRIP_TEMPLATE}")
+    refs = load_label_refs()
 
     frames = tail_frames()
     print(f"[postmatch] Scanne {len(frames)} Frames (letzte {TAIL_SECONDS}s) ...")
@@ -337,7 +374,7 @@ def main():
         img = cv2.imread(p)
         if img is None:
             continue
-        present, tab = classify(img, strip_ref)
+        present, tab = classify(img, refs)
         if present and tab:
             by_tab[tab].append((p, img))
 
