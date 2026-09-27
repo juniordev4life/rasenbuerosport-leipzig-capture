@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 
-MODEL = os.environ.get("SCORER_MODEL", "claude-sonnet-4-6")
+MODEL = os.environ.get("SCORER_MODEL", "claude-sonnet-5")
 CONF_THRESHOLD = float(os.environ.get("SCORER_CONF", "0.8"))  # ab hier "automatisch übernehmen"
 
 PROMPT = (
@@ -84,10 +84,12 @@ def detect_scorer(image_paths, color_map=None, model=MODEL):
                for p in image_paths]
     content.append({"type": "text", "text": PROMPT})
 
+    # Sonnet 5 denkt ohne Angabe adaptiv mit; fuer die kurze JSON-Antwort
+    # bewusst aus. Antwort = erster Text-Block, nicht content[0].
     resp = anthropic.Anthropic().messages.create(
-        model=model, max_tokens=200,
+        model=model, max_tokens=400, thinking={"type": "disabled"},
         messages=[{"role": "user", "content": content}])
-    text = resp.content[0].text
+    text = next((b.text for b in resp.content if b.type == "text"), "")
     m = re.search(r"\{.*\}", text, re.DOTALL)
     data = json.loads(m.group(0)) if m else {}
 

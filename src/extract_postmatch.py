@@ -32,7 +32,8 @@ Env:
   EVENTS_OUT       Ziel-JSON der Torliste (Default events_postmatch.json)
   SKIP_EVENTS=1    nur Stats-Frames, kein Vision-Call (z.B. wenn Taps existieren)
   ANTHROPIC_API_KEY  für den Vision-Call (Pflicht, außer SKIP_EVENTS)
-  EVENTS_MODEL     Default claude-sonnet-4-6 (validiert: bl-11-10 21/21 Tore)
+  EVENTS_MODEL     Default claude-sonnet-5 (gegen Sonnet 4.6 geprueft: fc27_1 7/7, fc27_2 3/3 Tore identisch;
+                   Sonnet 4.6 validiert: bl-11-10 21/21 Tore)
   MAX_EVENT_FRAMES Obergrenze Bilder an Claude (Default 12)
 """
 import atexit
@@ -57,7 +58,7 @@ FPS = float(os.environ.get("FPS", "2"))
 STATS_DIR = os.environ.get("STATS_DIR", "stats_postmatch")
 EVENTS_OUT = os.environ.get("EVENTS_OUT", "events_postmatch.json")
 SKIP_EVENTS = os.environ.get("SKIP_EVENTS") == "1"
-EVENTS_MODEL = os.environ.get("EVENTS_MODEL", "claude-sonnet-4-6")
+EVENTS_MODEL = os.environ.get("EVENTS_MODEL", "claude-sonnet-5")
 MAX_EVENT_FRAMES = int(os.environ.get("MAX_EVENT_FRAMES", "12"))
 
 LABEL_DIR = os.path.join(TEMPLATES, "menu", "labels")
@@ -283,7 +284,7 @@ def ask_claude(paths):
     client = anthropic.Anthropic()
     response = client.messages.create(
         model=EVENTS_MODEL,
-        max_tokens=4000,
+        max_tokens=8000,                      # Denken + JSON; Sonnet-5-Tokenizer zaehlt ~30 % mehr
         thinking={"type": "adaptive"},
         output_config={"format": {"type": "json_schema", "schema": EVENTS_SCHEMA}},
         messages=[{"role": "user", "content": content}],
@@ -348,7 +349,7 @@ def read_penalty_shootout(paths):
     try:
         client = anthropic.Anthropic()
         response = client.messages.create(
-            model=EVENTS_MODEL, max_tokens=1000, thinking={"type": "adaptive"},
+            model=EVENTS_MODEL, max_tokens=3000, thinking={"type": "adaptive"},
             output_config={"format": {"type": "json_schema", "schema": PENALTY_SCHEMA}},
             messages=[{"role": "user", "content": content}])
         text = next(b.text for b in response.content if b.type == "text")
